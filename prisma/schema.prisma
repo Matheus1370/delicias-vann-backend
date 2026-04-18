@@ -1,0 +1,671 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  CLIENTE
+  OPERADOR
+  GERENTE
+  ADMINISTRADOR
+}
+
+enum ProdutoStatus {
+  ATIVO
+  REVISAO_MARGEM
+  INATIVO
+}
+
+enum ProdutoTipo {
+  PADRAO
+  MONTAVEL
+  ASSINATURA
+  ADICIONAL
+}
+
+enum FulfillmentTipo {
+  MAKE_TO_STOCK
+  MAKE_TO_ORDER
+  HIBRIDO
+}
+
+enum FichaTipo {
+  FINANCEIRA
+  OPERACIONAL
+}
+
+enum MovimentacaoTipo {
+  ENTRADA
+  SAIDA_PRODUCAO
+  AJUSTE_POSITIVO
+  AJUSTE_NEGATIVO
+  QUEBRA_DESPERDICIO
+}
+
+enum SlotStatus {
+  ABERTO
+  CHEIO
+  BLOQUEADO
+}
+
+enum PedidoStatus {
+  AGUARDANDO_PAGAMENTO
+  PAGO
+  EM_PRODUCAO
+  PRONTO
+  EM_ENTREGA
+  ENTREGUE
+  CANCELADO
+  FALHA_ENTREGA
+  ATRASADO
+}
+
+enum CupomTipo {
+  PERCENTUAL
+  FIXO
+}
+
+enum AssinaturaStatus {
+  ATIVA
+  PAUSADA
+  CANCELADA
+}
+
+enum OrigemPedido {
+  ONLINE
+  BALCAO
+  WHATSAPP
+  ASSINATURA
+}
+
+enum EntregaModalidade {
+  RETIRADA_BALCAO
+  UBER_DIRECT
+  NOVENTA_NOVE_ENTREGAS
+  MOTOBOY_LOCAL
+}
+
+enum EntregaStatus {
+  AGUARDANDO_DESPACHO
+  DESPACHADO
+  EM_TRANSITO
+  ENTREGUE
+  FALHA
+}
+
+enum PagamentoStatus {
+  PENDENTE
+  CONFIRMADO
+  ESTORNADO
+  FALHA
+}
+
+enum PagamentoGateway {
+  ABACATE_PAY
+}
+
+enum NotificacaoCanal {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum NotificacaoStatus {
+  PENDENTE
+  ENVIADO
+  FALHOU
+}
+
+// ─── USUÁRIOS E ACESSO ────────────────────────────────────────────────────────
+
+model Usuario {
+  id               String    @id @default(uuid())
+  nome             String
+  email            String    @unique
+  telefone         String?
+  cpf              String?   @db.VarChar(14)
+  dataNascimento   DateTime? @db.Date
+  senhaHash        String
+  role             Role      @default(CLIENTE)
+  ativo            Boolean   @default(true)
+  marketingOptIn   Boolean   @default(false)
+  emailVerificado  Boolean   @default(false)
+  anonimizadoEm    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  enderecos        Endereco[]
+  pedidos          Pedido[]
+  refreshTokens    RefreshToken[]
+  auditLogs        AuditLog[]
+  aprovacoes       MargemAprovacao[]
+  assinaturas      Assinatura[]
+  avaliacoes       Avaliacao[]
+
+  @@index([email])
+  @@index([role])
+  @@index([dataNascimento])
+  @@map("usuarios")
+}
+
+model RefreshToken {
+  id            String   @id @default(uuid())
+  usuarioId     String
+  tokenLookup   String   @unique
+  tokenHash     String
+  expiresAt     DateTime
+  revogado      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@map("refresh_tokens")
+}
+
+model Endereco {
+  id           String  @id @default(uuid())
+  usuarioId    String
+  logradouro   String
+  numero       String
+  complemento  String?
+  bairro       String
+  cidade       String
+  estado       String  @db.Char(2)
+  cep          String  @db.Char(9)
+  principal    Boolean @default(false)
+  createdAt    DateTime @default(now())
+
+  usuario      Usuario  @relation(fields: [usuarioId], references: [id])
+  pedidos      Pedido[]
+
+  @@index([usuarioId])
+  @@map("enderecos")
+}
+
+// ─── CATÁLOGO ─────────────────────────────────────────────────────────────────
+
+model Categoria {
+  id              String  @id @default(uuid())
+  nome            String  @unique
+  slug            String  @unique
+  descricao       String?
+  margemMinima    Decimal @default(35) @db.Decimal(5, 2)
+  ordem           Int     @default(0)
+  ativa           Boolean @default(true)
+  createdAt       DateTime @default(now())
+
+  produtos        Produto[]
+
+  @@map("categorias")
+}
+
+model Produto {
+  id                   String          @id @default(uuid())
+  nome                 String
+  slug                 String          @unique
+  descricao            String?
+  tipo                 ProdutoTipo     @default(PADRAO)
+  fulfillment          FulfillmentTipo @default(MAKE_TO_ORDER)
+  precoVenda           Decimal         @db.Decimal(10, 2)
+  estoqueVitrine       Int             @default(0)
+  pontosEsforco        Int             @default(1)
+  status               ProdutoStatus   @default(ATIVO)
+  leadTimeHoras        Int             @default(48)
+  categoriaId          String?
+  imagemUrl            String?
+  alergenicos          String[]        @default([])
+  destaqueUpsell       Boolean         @default(false)
+  ativo                Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  categoria            Categoria?       @relation(fields: [categoriaId], references: [id])
+  fichasTecnicas       FichaTecnica[]
+  itensPedido          ItemPedido[]
+  opcoesMontagem       OpcaoMontagem[]
+  alertasEstoque       AlertaEstoque[]
+  avaliacoes           Avaliacao[]
+  assinaturas          Assinatura[]
+
+  @@index([status, ativo])
+  @@index([categoriaId])
+  @@index([tipo, destaqueUpsell])
+  @@map("produtos")
+}
+
+model OpcaoMontagem {
+  id          String  @id @default(uuid())
+  produtoId   String
+  etapa       String
+  label       String
+  descricao   String?
+  precoExtra  Decimal @default(0) @db.Decimal(8, 2)
+  pontosExtra Int     @default(0)
+  ordem       Int     @default(0)
+  ativa       Boolean @default(true)
+
+  produto     Produto @relation(fields: [produtoId], references: [id])
+
+  @@index([produtoId, etapa])
+  @@map("opcoes_montagem")
+}
+
+// ─── RECEITAS E FICHAS TÉCNICAS ───────────────────────────────────────────────
+
+model Insumo {
+  id              String  @id @default(uuid())
+  nome            String
+  unidadeMedida   String
+  precoUnitario   Decimal @db.Decimal(10, 4)
+  estoqueAtual    Decimal @default(0) @db.Decimal(12, 3)
+  pontoReposicao  Decimal @default(0) @db.Decimal(12, 3)
+  fornecedor      String?
+  codigoInterno   String? @unique
+  ativo           Boolean @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  itensFilha      ItemFicha[]
+  movimentacoes   MovimentacaoEstoque[]
+
+  @@index([estoqueAtual])
+  @@map("insumos")
+}
+
+model FichaTecnica {
+  id               String     @id @default(uuid())
+  produtoId        String
+  versao           Int        @default(1)
+  tipo             FichaTipo
+  ativa            Boolean    @default(false)
+  custoCalculado   Decimal    @default(0) @db.Decimal(10, 2)
+  margemCalculada  Decimal    @default(0) @db.Decimal(5, 2)
+  aprovadoPorId    String?
+  aprovadoEm       DateTime?
+  observacoes      String?
+  passosPreparo    String?
+  createdAt        DateTime   @default(now())
+
+  produto          Produto    @relation(fields: [produtoId], references: [id])
+  itens            ItemFicha[]
+  aprovacoes       MargemAprovacao[]
+
+  @@unique([produtoId, versao, tipo])
+  @@index([produtoId, ativa])
+  @@map("fichas_tecnicas")
+}
+
+model ItemFicha {
+  id              String       @id @default(uuid())
+  fichaTecnicaId  String
+  insumoId        String
+  quantidade      Decimal      @db.Decimal(12, 4)
+  unidadeMedida   String
+  custoUnitario   Decimal      @db.Decimal(10, 4)
+
+  fichaTecnica    FichaTecnica @relation(fields: [fichaTecnicaId], references: [id])
+  insumo          Insumo       @relation(fields: [insumoId], references: [id])
+
+  @@index([fichaTecnicaId])
+  @@map("itens_ficha")
+}
+
+model MargemAprovacao {
+  id              String       @id @default(uuid())
+  fichaTecnicaId  String
+  aprovadoPorId   String
+  margemAnterior  Decimal      @db.Decimal(5, 2)
+  margemNova      Decimal      @db.Decimal(5, 2)
+  justificativa   String
+  createdAt       DateTime     @default(now())
+
+  fichaTecnica    FichaTecnica @relation(fields: [fichaTecnicaId], references: [id])
+  aprovadoPor     Usuario      @relation(fields: [aprovadoPorId], references: [id])
+
+  @@map("margem_aprovacoes")
+}
+
+// ─── ESTOQUE ──────────────────────────────────────────────────────────────────
+
+model MovimentacaoEstoque {
+  id            String           @id @default(uuid())
+  insumoId      String
+  tipo          MovimentacaoTipo
+  quantidade    Decimal          @db.Decimal(12, 3)
+  custoUnitario Decimal?         @db.Decimal(10, 4)
+  pedidoId      String?
+  loteId        String?
+  motivo        String?
+  operadorId    String?
+  createdAt     DateTime         @default(now())
+
+  insumo        Insumo           @relation(fields: [insumoId], references: [id])
+
+  @@index([insumoId, createdAt])
+  @@index([pedidoId])
+  @@map("movimentacoes_estoque")
+}
+
+model AlertaEstoque {
+  id          String   @id @default(uuid())
+  produtoId   String?
+  insumoId    String?
+  tipo        String
+  mensagem    String
+  resolvido   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  produto     Produto? @relation(fields: [produtoId], references: [id])
+
+  @@map("alertas_estoque")
+}
+
+// ─── CAPACIDADE E PCP ─────────────────────────────────────────────────────────
+
+model SlotProducao {
+  id                 String     @id @default(uuid())
+  data               DateTime   @db.Date
+  horaInicio         DateTime   @db.Time
+  horaFim            DateTime   @db.Time
+  capacidadeMaxima   Int
+  capacidadeOcupada  Int        @default(0)
+  status             SlotStatus @default(ABERTO)
+  observacao         String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  reservas           ReservaProducao[]
+
+  @@unique([data, horaInicio])
+  @@index([data, status])
+  @@map("slots_producao")
+}
+
+model ReservaProducao {
+  id               String       @id @default(uuid())
+  pedidoId         String       @unique
+  slotId           String
+  pontosConsumidos Int
+  createdAt        DateTime     @default(now())
+
+  pedido           Pedido       @relation(fields: [pedidoId], references: [id])
+  slot             SlotProducao @relation(fields: [slotId], references: [id])
+
+  @@map("reservas_producao")
+}
+
+model LoteProducao {
+  id          String    @id @default(uuid())
+  slotId      String
+  status      String    @default("ABERTO")
+  observacao  String?
+  iniciadoEm  DateTime?
+  concluidoEm DateTime?
+  createdAt   DateTime  @default(now())
+
+  itens       ItemLote[]
+
+  @@map("lotes_producao")
+}
+
+model ItemLote {
+  id        String       @id @default(uuid())
+  loteId    String
+  pedidoId  String
+  lote      LoteProducao @relation(fields: [loteId], references: [id])
+
+  @@map("itens_lote")
+}
+
+// ─── PEDIDOS ──────────────────────────────────────────────────────────────────
+
+model Pedido {
+  id                   String        @id @default(uuid())
+  clienteId            String
+  status               PedidoStatus  @default(AGUARDANDO_PAGAMENTO)
+  modalidadeEntrega    EntregaModalidade
+  origem               OrigemPedido  @default(ONLINE)
+  dataAgendamento      DateTime?
+  enderecoEntregaId    String?
+  cupomId              String?
+  assinaturaId         String?
+  valorSubtotal        Decimal       @db.Decimal(10, 2)
+  valorFrete           Decimal       @default(0) @db.Decimal(8, 2)
+  valorDesconto        Decimal       @default(0) @db.Decimal(8, 2)
+  valorTotal           Decimal       @db.Decimal(10, 2)
+  observacoes          String?
+  canceladoMotivo      String?
+  canceladoPor         String?
+  slaDeadline          DateTime?
+  slaAlertado          Boolean       @default(false)
+  nfeNumero            String?
+  nfeUrl               String?
+  nfeXmlUrl            String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  cliente              Usuario       @relation(fields: [clienteId], references: [id])
+  enderecoEntrega      Endereco?     @relation(fields: [enderecoEntregaId], references: [id])
+  cupom                Cupom?        @relation(fields: [cupomId], references: [id])
+  assinatura           Assinatura?   @relation(fields: [assinaturaId], references: [id])
+  itens                ItemPedido[]
+  pagamento            Pagamento?
+  entrega              Entrega?
+  reservaProducao      ReservaProducao?
+  notificacoes         Notificacao[]
+  avaliacao            Avaliacao?
+
+  @@index([clienteId, status, createdAt(sort: Desc)])
+  @@index([status, dataAgendamento])
+  @@index([status, slaDeadline])
+  @@index([canceladoMotivo])
+  @@map("pedidos")
+}
+
+model ItemPedido {
+  id                      String   @id @default(uuid())
+  pedidoId                String
+  produtoId               String
+  quantidade              Int
+  precoUnitario           Decimal  @db.Decimal(10, 2)
+  snapshotCustoProducao   Decimal  @db.Decimal(10, 2)
+  snapshotPontosEsforco   Int
+  opcoesEscolhidas        Json?
+  personalizacao          String?
+
+  pedido                  Pedido   @relation(fields: [pedidoId], references: [id])
+  produto                 Produto  @relation(fields: [produtoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("itens_pedido")
+}
+
+// ─── PAGAMENTO ────────────────────────────────────────────────────────────────
+
+model Pagamento {
+  id                  String           @id @default(uuid())
+  pedidoId            String           @unique
+  gateway             PagamentoGateway @default(ABACATE_PAY)
+  status              PagamentoStatus  @default(PENDENTE)
+  metodo              String?
+  valorPago           Decimal?         @db.Decimal(10, 2)
+  gatewayTransacaoId  String?          @unique
+  gatewayPayloadRaw   Json?
+  pixCopiaCola        String?
+  pixQrCodeUrl        String?
+  expiresAt           DateTime?
+  confirmadoEm        DateTime?
+  estornadoEm         DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  pedido              Pedido           @relation(fields: [pedidoId], references: [id])
+
+  @@index([gatewayTransacaoId])
+  @@map("pagamentos")
+}
+
+// ─── ENTREGA ──────────────────────────────────────────────────────────────────
+
+model Entrega {
+  id                       String            @id @default(uuid())
+  pedidoId                 String            @unique
+  modalidade               EntregaModalidade
+  status                   EntregaStatus     @default(AGUARDANDO_DESPACHO)
+  trackingCode             String?
+  provedorJobId            String?
+  enderecoDestinoSnapshot  Json?
+  previsaoEntrega          DateTime?
+  entregueEm               DateTime?
+  falhaMotivo              String?
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+
+  pedido                   Pedido            @relation(fields: [pedidoId], references: [id])
+
+  @@map("entregas")
+}
+
+// ─── CUPONS ───────────────────────────────────────────────────────────────────
+
+model Cupom {
+  id             String    @id @default(uuid())
+  codigo         String    @unique
+  tipo           CupomTipo
+  valor          Decimal   @db.Decimal(10, 2)
+  minimoCompra   Decimal   @default(0) @db.Decimal(10, 2)
+  usoMaximo      Int?
+  usoAtual       Int       @default(0)
+  validoDe       DateTime  @default(now())
+  validoAte      DateTime
+  ativo          Boolean   @default(true)
+  descricao      String?
+  campanha       String?
+  createdAt      DateTime  @default(now())
+
+  pedidos        Pedido[]
+
+  @@index([codigo, ativo])
+  @@index([validoAte, ativo])
+  @@map("cupons")
+}
+
+// ─── ASSINATURAS ──────────────────────────────────────────────────────────────
+
+model Assinatura {
+  id               String           @id @default(uuid())
+  clienteId        String
+  produtoId        String
+  status           AssinaturaStatus @default(ATIVA)
+  frequenciaDias   Int              @default(30)
+  proximaGeracao   DateTime
+  ultimaGeracaoEm  DateTime?
+  diaPreferido     Int?
+  observacoes      String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  cliente          Usuario          @relation(fields: [clienteId], references: [id])
+  produto          Produto          @relation(fields: [produtoId], references: [id])
+  pedidos          Pedido[]
+
+  @@index([status, proximaGeracao])
+  @@index([clienteId])
+  @@map("assinaturas")
+}
+
+// ─── AVALIAÇÕES ───────────────────────────────────────────────────────────────
+
+model Avaliacao {
+  id           String   @id @default(uuid())
+  pedidoId     String   @unique
+  clienteId    String
+  produtoId    String?
+  nota         Int
+  comentario   String?
+  publicado    Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  pedido       Pedido   @relation(fields: [pedidoId], references: [id])
+  cliente      Usuario  @relation(fields: [clienteId], references: [id])
+  produto      Produto? @relation(fields: [produtoId], references: [id])
+
+  @@index([produtoId, publicado])
+  @@index([clienteId])
+  @@map("avaliacoes")
+}
+
+// ─── WEBHOOKS E VENDAS BALCÃO ─────────────────────────────────────────────────
+
+model WebhookEvent {
+  id           String   @id
+  gateway      String
+  processadoEm DateTime @default(now())
+  payload      Json?
+
+  @@index([gateway, processadoEm])
+  @@map("webhook_events")
+}
+
+model VendaBalcao {
+  id            String   @id @default(uuid())
+  operadorId    String
+  valorTotal    Decimal  @db.Decimal(10, 2)
+  itens         Json
+  observacoes   String?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("vendas_balcao")
+}
+
+// ─── NOTIFICAÇÕES ─────────────────────────────────────────────────────────────
+
+model Notificacao {
+  id          String            @id @default(uuid())
+  pedidoId    String?
+  usuarioId   String?
+  canal       NotificacaoCanal
+  status      NotificacaoStatus @default(PENDENTE)
+  templateId  String
+  payload     Json
+  tentativas  Int               @default(0)
+  erroMensagem String?
+  enviadoEm   DateTime?
+  createdAt   DateTime          @default(now())
+
+  pedido      Pedido?           @relation(fields: [pedidoId], references: [id])
+
+  @@index([pedidoId])
+  @@index([status, createdAt])
+  @@map("notificacoes")
+}
+
+// ─── AUDITORIA ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  usuarioId      String?
+  acao           String
+  entidade       String
+  entidadeId     String
+  payloadAntes   Json?
+  payloadDepois  Json?
+  ip             String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  usuario        Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([entidade, entidadeId, createdAt(sort: Desc)])
+  @@index([usuarioId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

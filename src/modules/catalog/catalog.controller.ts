@@ -1,0 +1,54 @@
+import { Controller, Get, Post, Put, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { CatalogService } from './catalog.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Public } from '../../common/decorators/public.decorator';
+
+@Controller('catalog')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class CatalogController {
+  constructor(private catalogService: CatalogService) {}
+
+  @Public()
+  @Get('products')
+  findAll(@Query() query: { categoria?: string; tipo?: string; disponivel?: string }) {
+    return this.catalogService.findAllPublic(query);
+  }
+
+  @Public()
+  @Get('products/:slug')
+  findOne(@Param('slug') slug: string) {
+    return this.catalogService.findBySlug(slug);
+  }
+
+  @Public()
+  @Get('categories')
+  categories() {
+    return this.catalogService.findCategories();
+  }
+
+  @Public()
+  @Get('upsell')
+  upsell() {
+    return this.catalogService.findUpsellItems();
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Post('products')
+  create(@Body() body: any, @Request() req: any) {
+    return this.catalogService.create(body, req.user.sub);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Put('products/:id')
+  update(@Param('id') id: string, @Body() body: any, @Request() req: any) {
+    return this.catalogService.update(id, body, req.user.sub);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Post('products/:id/approve-margin')
+  approveMargin(@Param('id') id: string, @Body() body: { justificativa: string }, @Request() req: any) {
+    return this.catalogService.approveMargin(id, body.justificativa, req.user.sub);
+  }
+}
