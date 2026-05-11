@@ -435,4 +435,157 @@ describe('OrderService', () => {
       expect(result).toEqual([]);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // createRascunhoWhatsApp
+  // -------------------------------------------------------------------------
+  describe('createRascunhoWhatsApp', () => {
+    const baseData = {
+      itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+    };
+
+    it('creates a pedido with status RASCUNHO_WHATSAPP and origem WHATSAPP', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      const draft = makePedido({
+        id: 'draft-1',
+        status: 'RASCUNHO_WHATSAPP',
+        valorTotal: 100,
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(draft);
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.status).toBe('RASCUNHO_WHATSAPP');
+      expect(createCall.data.origem).toBe('WHATSAPP');
+      expect(createCall.data.clienteId).toBe('cliente-1');
+    });
+
+    it('computes valorSubtotal and valorTotal from itens, ignoring frete and desconto', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 3 }],
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.valorSubtotal).toBe(150);
+      expect(createCall.data.valorTotal).toBe(150);
+      expect(createCall.data.valorDesconto).toBe(0);
+      expect(createCall.data.valorFrete).toBe(0);
+    });
+
+    it('does NOT create a Pagamento (rascunho is not chargeable)', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.pagamento).toBeUndefined();
+    });
+
+    it('does NOT reserve a slot, does NOT enqueue payment-timeout, does NOT call gateway', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      expect(capacityService.reservarSlot).not.toHaveBeenCalled();
+      expect(ordersQueue.add).not.toHaveBeenCalled();
+      expect(gatewayService.createPixCharge).not.toHaveBeenCalled();
+    });
+
+    it('defaults modalidadeEntrega to RETIRADA_BALCAO when not provided', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.modalidadeEntrega).toBe('RETIRADA_BALCAO');
+    });
+
+    it('persists numeroPessoas, ocasiao and observacoes when provided', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', {
+        ...baseData,
+        numeroPessoas: 20,
+        ocasiao: 'infantil',
+        observacoes: 'sem nozes',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.numeroPessoas).toBe(20);
+      expect(createCall.data.ocasiao).toBe('infantil');
+      expect(createCall.data.observacoes).toBe('sem nozes');
+    });
+
+    it('throws BadRequestException when any produto is unavailable', async () => {
+      prisma.produto.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.createRascunhoWhatsApp('cliente-1', baseData),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('logs audit with WHATSAPP_DRAFT_CREATED action', async () => {
+      const produto = makeProduto();
+      const draft = makePedido({ id: 'draft-x', status: 'RASCUNHO_WHATSAPP' });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(draft);
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acao: 'ORDER.WHATSAPP_DRAFT_CREATED',
+          entidade: 'Pedido',
+          entidadeId: 'draft-x',
+          usuarioId: 'cliente-1',
+        }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // findRascunhosWhatsApp
+  // -------------------------------------------------------------------------
+  describe('findRascunhosWhatsApp', () => {
+    it('queries only pedidos with status RASCUNHO_WHATSAPP, newest first', async () => {
+      prisma.pedido.findMany.mockResolvedValue([]);
+
+      await service.findRascunhosWhatsApp();
+
+      expect(prisma.pedido.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'RASCUNHO_WHATSAPP' },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+    });
+
+    it('includes cliente (nome, telefone) and itens with produto nome', async () => {
+      prisma.pedido.findMany.mockResolvedValue([]);
+
+      await service.findRascunhosWhatsApp();
+
+      const call = prisma.pedido.findMany.mock.calls[0][0];
+      expect(call.include.cliente).toEqual({
+        select: { id: true, nome: true, telefone: true, email: true },
+      });
+      expect(call.include.itens.include.produto).toEqual({
+        select: { id: true, nome: true, slug: true },
+      });
+    });
+  });
 });

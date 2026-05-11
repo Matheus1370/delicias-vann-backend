@@ -443,6 +443,97 @@ export class OrderService {
     });
   }
 
+  async createRascunhoWhatsApp(
+    clienteId: string,
+    data: {
+      itens: Array<{
+        produtoId: string;
+        quantidade: number;
+        opcoesEscolhidas?: any;
+        personalizacao?: string;
+      }>;
+      modalidadeEntrega?: string;
+      dataAgendamento?: string;
+      observacoes?: string;
+      numeroPessoas?: number;
+      ocasiao?: string;
+    },
+  ) {
+    const produtos = await this.prisma.produto.findMany({
+      where: {
+        id: { in: data.itens.map((i) => i.produtoId) },
+        status: 'ATIVO',
+        ativo: true,
+      },
+    });
+
+    if (produtos.length !== new Set(data.itens.map((i) => i.produtoId)).size) {
+      throw new BadRequestException('Um ou mais produtos não estão disponíveis');
+    }
+
+    const itensMapeados = data.itens.map((item) => {
+      const produto = produtos.find((p) => p.id === item.produtoId)!;
+      return {
+        produtoId: item.produtoId,
+        quantidade: item.quantidade,
+        precoUnitario: produto.precoVenda,
+        snapshotCustoProducao: new Prisma.Decimal(0),
+        snapshotPontosEsforco: produto.pontosEsforco,
+        opcoesEscolhidas: item.opcoesEscolhidas ?? Prisma.JsonNull,
+        personalizacao: item.personalizacao ?? null,
+      };
+    });
+
+    const valorSubtotal = itensMapeados.reduce(
+      (acc, i) => acc + Number(i.precoUnitario) * i.quantidade,
+      0,
+    );
+
+    const draft = await this.prisma.pedido.create({
+      data: {
+        clienteId,
+        status: 'RASCUNHO_WHATSAPP',
+        origem: 'WHATSAPP',
+        modalidadeEntrega: (data.modalidadeEntrega as any) ?? 'RETIRADA_BALCAO',
+        dataAgendamento: data.dataAgendamento ? new Date(data.dataAgendamento) : null,
+        valorSubtotal,
+        valorFrete: 0,
+        valorDesconto: 0,
+        valorTotal: valorSubtotal,
+        numeroPessoas: data.numeroPessoas ?? null,
+        ocasiao: data.ocasiao ?? null,
+        observacoes: data.observacoes ?? null,
+        itens: { create: itensMapeados },
+      },
+      include: { itens: true },
+    });
+
+    await this.audit.log({
+      acao: 'ORDER.WHATSAPP_DRAFT_CREATED',
+      entidade: 'Pedido',
+      entidadeId: draft.id,
+      payloadDepois: { id: draft.id, valorTotal: draft.valorTotal },
+      usuarioId: clienteId,
+    });
+
+    return draft;
+  }
+
+  async findRascunhosWhatsApp() {
+    return this.prisma.pedido.findMany({
+      where: { status: 'RASCUNHO_WHATSAPP' },
+      include: {
+        cliente: { select: { id: true, nome: true, telefone: true, email: true } },
+        itens: {
+          include: {
+            produto: { select: { id: true, nome: true, slug: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async fichaProducao(pedidoId: string) {
     const pedido = await this.prisma.pedido.findUnique({
       where: { id: pedidoId },

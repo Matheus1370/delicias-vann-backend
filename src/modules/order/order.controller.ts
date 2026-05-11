@@ -24,9 +24,20 @@ export class OrderController {
     return this.orderService.create(req.user.sub, body);
   }
 
+  @Post('rascunho-whatsapp')
+  createRascunhoWhatsApp(@Body() body: any, @Request() req: any) {
+    return this.orderService.createRascunhoWhatsApp(req.user.sub, body);
+  }
+
   @Get('mine')
   findMine(@Request() req: any) {
     return this.orderService.findByCliente(req.user.sub);
+  }
+
+  @Roles('OPERADOR', 'GERENTE', 'ADMINISTRADOR')
+  @Get('rascunhos-whatsapp')
+  findRascunhosWhatsApp() {
+    return this.orderService.findRascunhosWhatsApp();
   }
 
   @Get(':id')
