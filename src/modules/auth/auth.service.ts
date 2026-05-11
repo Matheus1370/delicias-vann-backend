@@ -80,6 +80,30 @@ export class AuthService {
     return result;
   }
 
+  async loginGoogle(googleUser: { email: string; nome: string; googleId: string; foto?: string }) {
+    let user = await this.prisma.usuario.findUnique({ where: { email: googleUser.email } });
+
+    if (!user) {
+      // Cria conta automaticamente com senha aleatória (login só via Google)
+      const senhaHash = await argon2.hash(randomBytes(32).toString('hex'));
+      user = await this.prisma.usuario.create({
+        data: {
+          nome: googleUser.nome,
+          email: googleUser.email,
+          senhaHash,
+          emailVerificado: true,
+        },
+      });
+    }
+
+    if (!user.ativo || user.anonimizadoEm) {
+      throw new UnauthorizedException('Conta desativada');
+    }
+
+    const { senhaHash: _, ...safeUser } = user;
+    return this.login(safeUser);
+  }
+
   async logout(usuarioId: string) {
     await this.prisma.refreshToken.updateMany({
       where: { usuarioId, revogado: false },

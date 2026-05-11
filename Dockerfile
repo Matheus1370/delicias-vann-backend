@@ -5,7 +5,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++ openssl-dev
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install --ignore-scripts=false
 COPY . .
 RUN npx prisma generate
 RUN npm run build
