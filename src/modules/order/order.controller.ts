@@ -85,4 +85,14 @@ export class OrderController {
   fichaProducao(@Param('id') id: string) {
     return this.orderService.fichaProducao(id);
   }
+
+  @Roles('OPERADOR', 'GERENTE', 'ADMINISTRADOR')
+  @Post(':id/foto-pronto')
+  adicionarFotoPronto(
+    @Param('id') id: string,
+    @Body() body: { url: string; legenda?: string },
+    @Request() req: any,
+  ) {
+    return this.orderService.adicionarFotoPronto(id, body.url, body.legenda, req.user.sub);
+  }
 }

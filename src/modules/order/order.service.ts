@@ -341,6 +341,7 @@ export class OrderService {
         enderecoEntrega: true,
         cupom: true,
         avaliacao: true,
+        fotosEntrega: { orderBy: { enviadaEm: 'desc' } },
       },
     });
     if (!pedido) throw new NotFoundException('Pedido não encontrado');
@@ -532,6 +533,61 @@ export class OrderService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async adicionarFotoPronto(
+    pedidoId: string,
+    url: string,
+    legenda: string | undefined,
+    operadorId: string,
+  ) {
+    if (!url || !url.trim()) {
+      throw new BadRequestException('URL da foto é obrigatória');
+    }
+
+    const pedido = await this.prisma.pedido.findUnique({
+      where: { id: pedidoId },
+      include: { cliente: { select: { id: true, nome: true, telefone: true } } },
+    });
+
+    if (!pedido) throw new NotFoundException('Pedido não encontrado');
+
+    if (pedido.status !== 'PRONTO') {
+      throw new BadRequestException(
+        `Foto só pode ser anexada quando pedido está PRONTO (atual: ${pedido.status})`,
+      );
+    }
+
+    const foto = await this.prisma.fotoEntrega.create({
+      data: {
+        pedidoId,
+        url: url.trim(),
+        legenda: legenda ?? null,
+      },
+    });
+
+    if (pedido.cliente?.telefone) {
+      await this.notifications.send({
+        pedidoId,
+        telefone: pedido.cliente.telefone,
+        templateId: 'foto_bolo_pronto',
+        payload: {
+          nome: pedido.cliente.nome,
+          pedidoId,
+          fotoUrl: url.trim(),
+        },
+      });
+    }
+
+    await this.audit.log({
+      acao: 'ORDER.FOTO_PRONTO_ADDED',
+      entidade: 'Pedido',
+      entidadeId: pedidoId,
+      payloadDepois: { fotoId: foto.id },
+      usuarioId: operadorId,
+    });
+
+    return foto;
   }
 
   async fichaProducao(pedidoId: string) {

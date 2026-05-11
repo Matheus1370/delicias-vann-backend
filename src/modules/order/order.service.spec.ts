@@ -70,6 +70,7 @@ describe('OrderService', () => {
       usuario: { findUnique: jest.fn() },
       insumo: { findMany: jest.fn(), update: jest.fn() },
       movimentacaoEstoque: { create: jest.fn() },
+      fotoEntrega: { create: jest.fn() },
       $transaction: jest.fn((cb: any) => {
         if (typeof cb === 'function') return cb(prisma);
         // Support array-style $transaction
@@ -554,6 +555,162 @@ describe('OrderService', () => {
           usuarioId: 'cliente-1',
         }),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // adicionarFotoPronto
+  // -------------------------------------------------------------------------
+  describe('adicionarFotoPronto', () => {
+    const makeFoto = (overrides: Partial<any> = {}) => ({
+      id: 'foto-1',
+      pedidoId: 'pedido-1',
+      url: 'https://example.com/bolo.jpg',
+      legenda: null,
+      enviadaEm: new Date(),
+      ...overrides,
+    });
+
+    it('throws NotFoundException when pedido does not exist', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.adicionarFotoPronto('pedido-x', 'https://img.com/a.jpg', undefined, 'op-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws BadRequestException when pedido status is not PRONTO', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(
+        makePedido({ status: 'EM_PRODUCAO', cliente: { nome: 'Vann', telefone: '11999' } }),
+      );
+
+      await expect(
+        service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException when url is empty', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(
+        makePedido({ status: 'PRONTO', cliente: { nome: 'Vann', telefone: '11999' } }),
+      );
+
+      await expect(
+        service.adicionarFotoPronto('pedido-1', '', undefined, 'op-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('creates a FotoEntrega with url and legenda when status is PRONTO', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(
+        makeFoto({ url: 'https://img.com/a.jpg', legenda: 'sai em 30min' }),
+      );
+
+      await service.adicionarFotoPronto(
+        'pedido-1',
+        'https://img.com/a.jpg',
+        'sai em 30min',
+        'op-1',
+      );
+
+      expect(prisma.fotoEntrega.create).toHaveBeenCalledWith({
+        data: {
+          pedidoId: 'pedido-1',
+          url: 'https://img.com/a.jpg',
+          legenda: 'sai em 30min',
+        },
+      });
+    });
+
+    it('accepts legenda as optional and stores null', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto());
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1');
+
+      const call = prisma.fotoEntrega.create.mock.calls[0][0];
+      expect(call.data.legenda).toBeNull();
+    });
+
+    it('sends notification to client with foto_bolo_pronto template', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999999999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto());
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1');
+
+      expect(notificationService.send).toHaveBeenCalledWith({
+        pedidoId: 'pedido-1',
+        telefone: '11999999999',
+        templateId: 'foto_bolo_pronto',
+        payload: expect.objectContaining({
+          nome: 'Vann',
+          pedidoId: 'pedido-1',
+          fotoUrl: 'https://img.com/a.jpg',
+        }),
+      });
+    });
+
+    it('does NOT send notification when client has no telefone', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: null },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto());
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1');
+
+      expect(notificationService.send).not.toHaveBeenCalled();
+    });
+
+    it('logs audit with FOTO_PRONTO_ADDED action', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto({ id: 'foto-x' }));
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', 'oi', 'op-1');
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acao: 'ORDER.FOTO_PRONTO_ADDED',
+          entidade: 'Pedido',
+          entidadeId: 'pedido-1',
+          usuarioId: 'op-1',
+        }),
+      );
+    });
+
+    it('returns the created foto', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      const foto = makeFoto({ id: 'foto-x', url: 'https://img.com/a.jpg' });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(foto);
+
+      const result = await service.adicionarFotoPronto(
+        'pedido-1',
+        'https://img.com/a.jpg',
+        undefined,
+        'op-1',
+      );
+
+      expect(result).toBe(foto);
     });
   });
 

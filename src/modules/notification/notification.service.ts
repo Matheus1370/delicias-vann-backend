@@ -113,6 +113,7 @@ export class NotificationService {
       confirmacao_pedido: `Olá ${params.nome}! Seu pedido #${params.pedidoId} foi confirmado. Delicias da Vann`,
       pedido_pronto: `Olá ${params.nome}! Seu pedido #${params.pedidoId} está pronto! Delicias da Vann`,
       pedido_enviado: `Seu pedido #${params.pedidoId} está a caminho! Delicias da Vann`,
+      foto_bolo_pronto: `Olá ${params.nome}! Seu bolo tá pronto e tá lindo 🎂 Veja a foto: ${params.fotoUrl} — sai daqui em 30min. Delicias da Vann`,
     };
     return templates[templateId] ?? `Atualização do pedido #${params.pedidoId} - Delicias da Vann`;
   }

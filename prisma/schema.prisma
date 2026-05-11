@@ -465,6 +465,7 @@ model Pedido {
   reservaProducao      ReservaProducao?
   notificacoes         Notificacao[]
   avaliacao            Avaliacao?
+  fotosEntrega         FotoEntrega[]
 
   @@index([clienteId, status, createdAt(sort: Desc)])
   @@index([status, dataAgendamento])
@@ -489,6 +490,19 @@ model ItemPedido {
 
   @@index([pedidoId])
   @@map("itens_pedido")
+}
+
+model FotoEntrega {
+  id        String   @id @default(uuid())
+  pedidoId  String
+  url       String
+  legenda   String?
+  enviadaEm DateTime @default(now())
+
+  pedido    Pedido   @relation(fields: [pedidoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("fotos_entrega")
 }
 
 // ─── PAGAMENTO ────────────────────────────────────────────────────────────────
