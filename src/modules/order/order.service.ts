@@ -31,6 +31,8 @@ interface CreateOrderData {
   cupomCodigo?: string;
   origem?: 'ONLINE' | 'WHATSAPP' | 'ASSINATURA' | 'BALCAO';
   assinaturaId?: string;
+  numeroPessoas?: number;
+  ocasiao?: string;
 }
 
 @Injectable()
@@ -117,6 +119,8 @@ export class OrderService {
           valorFrete: 0,
           valorDesconto,
           valorTotal: valorSubtotal - valorDesconto,
+          numeroPessoas: data.numeroPessoas ?? null,
+          ocasiao: data.ocasiao ?? null,
           observacoes: data.observacoes,
           slaDeadline,
           itens: { create: itensMapeados },

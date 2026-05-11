@@ -441,6 +441,8 @@ model Pedido {
   valorFrete           Decimal       @default(0) @db.Decimal(8, 2)
   valorDesconto        Decimal       @default(0) @db.Decimal(8, 2)
   valorTotal           Decimal       @db.Decimal(10, 2)
+  numeroPessoas        Int?
+  ocasiao              String?
   observacoes          String?
   canceladoMotivo      String?
   canceladoPor         String?
