@@ -54,6 +54,52 @@ export class CatalogService {
     return produtos;
   }
 
+  /**
+   * Lista produtos do tipo ADICIONAL ativos, com sugestão de quantidade
+   * baseada no número de pessoas (passo 0 do wizard).
+   *
+   * Heurística de classificação:
+   * - "porção" (sugere DOCINHOS_POR_PESSOA × pessoas): nome contém "doce",
+   *   "docinho", "brigadeiro", "beijinho", "casadinho", "copinho".
+   * - "unidade" (default 0, cliente decide se quer): demais (velas, cartão, foto).
+   */
+  async findAdicionais(numeroPessoas?: number) {
+    const DOCINHOS_POR_PESSOA = 5;
+    const REGEX_PORCAO = /\b(doce|docinho|brigadeiro|beijinho|casadinho|copinho)/i;
+
+    const produtos = await this.prisma.produto.findMany({
+      where: {
+        ativo: true,
+        status: 'ATIVO',
+        tipo: 'ADICIONAL',
+      },
+      orderBy: { nome: 'asc' },
+    });
+
+    const itens = produtos.map((p) => {
+      const ehPorcao = REGEX_PORCAO.test(p.nome);
+      const quantidadeSugerida =
+        ehPorcao && numeroPessoas && numeroPessoas > 0
+          ? numeroPessoas * DOCINHOS_POR_PESSOA
+          : 0;
+      return {
+        ...p,
+        unidade: ehPorcao ? 'PORCAO' : 'UNIDADE',
+        quantidadeSugerida,
+      };
+    });
+
+    return {
+      itens,
+      meta: {
+        numeroPessoas: numeroPessoas ?? null,
+        docinhosPorPessoa: DOCINHOS_POR_PESSOA,
+        totalSugerido:
+          numeroPessoas && numeroPessoas > 0 ? numeroPessoas * DOCINHOS_POR_PESSOA : 0,
+      },
+    };
+  }
+
   async findCategories() {
     return this.prisma.categoria.findMany({
       where: { ativa: true },

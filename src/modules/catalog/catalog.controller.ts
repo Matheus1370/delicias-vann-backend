@@ -34,6 +34,13 @@ export class CatalogController {
     return this.catalogService.findUpsellItems();
   }
 
+  @Public()
+  @Get('adicionais')
+  adicionais(@Query('numeroPessoas') numeroPessoas?: string) {
+    const n = numeroPessoas ? parseInt(numeroPessoas, 10) : undefined;
+    return this.catalogService.findAdicionais(Number.isFinite(n) ? n : undefined);
+  }
+
   @Roles('GERENTE', 'ADMINISTRADOR')
   @Post('products')
   create(@Body() body: any, @Request() req: any) {
