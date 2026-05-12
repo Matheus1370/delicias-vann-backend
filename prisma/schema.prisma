@@ -505,6 +505,20 @@ model FotoEntrega {
   @@map("fotos_entrega")
 }
 
+model RegraCombinacao {
+  id        String   @id @default(uuid())
+  nome      String
+  nivel     String   // "BLOQUEAR" | "AVISAR"
+  condicao  Json     // { todos: [<predicado>, ...] }
+  mensagem  String
+  ativa     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ativa])
+  @@map("regras_combinacao")
+}
+
 // ─── PAGAMENTO ────────────────────────────────────────────────────────────────
 
 model Pagamento {

@@ -367,10 +367,135 @@ async function main() {
     },
   });
 
+  // Regras de combinação inviável (proteção da cozinha)
+  const regras: Array<{
+    nome: string;
+    nivel: 'BLOQUEAR' | 'AVISAR';
+    mensagem: string;
+    condicao: { todos: any[] };
+  }> = [
+    {
+      nome: 'Chantilly em entrega motorizada com calor',
+      nivel: 'AVISAR',
+      mensagem:
+        'Chantilly derrete acima de 28°C. Em moto/Uber pode chegar comprometido. Considere retirada no balcão ou outra cobertura.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'cobertura', valor: 'chantilly' },
+          { tipo: 'TEMPERATURA_GTE', valor: 28 },
+          { tipo: 'MODALIDADE_IN', valores: ['UBER_DIRECT', 'NOVENTA_NOVE_ENTREGAS'] },
+        ],
+      },
+    },
+    {
+      nome: 'Chantilly em calor extremo',
+      nivel: 'BLOQUEAR',
+      mensagem:
+        'Acima de 32°C nem retirada com chantilly fica garantido. Vamos sugerir buttercream ou ganache?',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'cobertura', valor: 'chantilly' },
+          { tipo: 'TEMPERATURA_GTE', valor: 32 },
+        ],
+      },
+    },
+    {
+      nome: 'Biscuit com prazo curto',
+      nivel: 'BLOQUEAR',
+      mensagem:
+        'Topo de biscuit precisa de pelo menos 72h pra secar. Escolha outra data ou outro topo.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'topo', valor: 'biscuit' },
+          { tipo: 'PRAZO_HORAS_LTE', valor: 72 },
+        ],
+      },
+    },
+    {
+      nome: 'Pasta americana em dia quente',
+      nivel: 'AVISAR',
+      mensagem:
+        'Pasta americana pode suar acima de 30°C. Comunicamos o cliente de não deixar exposta antes da festa.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'cobertura', valor: 'pasta americana' },
+          { tipo: 'TEMPERATURA_GTE', valor: 30 },
+        ],
+      },
+    },
+    {
+      nome: 'Recheio cremoso com prazo curto',
+      nivel: 'AVISAR',
+      mensagem:
+        'Recheios cremosos (mousse, brigadeiro mole) precisam de tempo de geladeira. Idealmente pedir com 48h de antecedência.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'recheio', valor: 'mousse' },
+          { tipo: 'PRAZO_HORAS_LTE', valor: 48 },
+        ],
+      },
+    },
+    {
+      nome: 'Bolo montável em moto',
+      nivel: 'AVISAR',
+      mensagem:
+        'Bolo de andar não viaja bem em moto. Recomendamos retirada no balcão ou motoboy local com cuidado.',
+      condicao: {
+        todos: [
+          { tipo: 'PRODUTO_TIPO', valor: 'MONTAVEL' },
+          { tipo: 'MODALIDADE_IN', valores: ['UBER_DIRECT', 'NOVENTA_NOVE_ENTREGAS'] },
+        ],
+      },
+    },
+    {
+      nome: 'Personalização sem prazo',
+      nivel: 'BLOQUEAR',
+      mensagem:
+        'Topo ou decoração personalizada precisa de pelo menos 48h. Selecione uma data mais à frente.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'topo', valor: 'personalizado' },
+          { tipo: 'PRAZO_HORAS_LTE', valor: 48 },
+        ],
+      },
+    },
+    {
+      nome: 'Red Velvet em retirada urgente',
+      nivel: 'AVISAR',
+      mensagem:
+        'Red Velvet sai melhor com 24h de descanso. Em prazo apertado, a massa pode ficar menos macia.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'massa', valor: 'red velvet' },
+          { tipo: 'PRAZO_HORAS_LTE', valor: 30 },
+        ],
+      },
+    },
+    {
+      nome: 'Morango com chantilly em moto',
+      nivel: 'AVISAR',
+      mensagem:
+        'Morango + chantilly + moto = risco alto de chegada comprometida. Sugerimos retirada ou motoboy local.',
+      condicao: {
+        todos: [
+          { tipo: 'OPCAO_CONTEM', etapa: 'recheio', valor: 'morango' },
+          { tipo: 'MODALIDADE_IN', valores: ['UBER_DIRECT', 'NOVENTA_NOVE_ENTREGAS'] },
+        ],
+      },
+    },
+  ];
+
+  for (const r of regras) {
+    const existente = await prisma.regraCombinacao.findFirst({ where: { nome: r.nome } });
+    if (existente) continue;
+    await prisma.regraCombinacao.create({ data: r });
+  }
+
   console.log('Seed concluído!');
   console.log('   admin@deliciasdavann.com.br / admin123');
   console.log('   van@deliciasdavann.com.br   / gerente123');
   console.log('   cupom de teste: VANN10');
+  console.log(`   ${regras.length} regras de combinação seedadas`);
 }
 
 main()

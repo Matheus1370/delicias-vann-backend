@@ -18,6 +18,7 @@ import { CupomModule } from './modules/cupom/cupom.module';
 import { AssinaturaModule } from './modules/assinatura/assinatura.module';
 import { AvaliacaoModule } from './modules/avaliacao/avaliacao.module';
 import { UserModule } from './modules/user/user.module';
+import { RegrasModule } from './modules/regras/regras.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -62,6 +63,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     AssinaturaModule,
     AvaliacaoModule,
     ReportModule,
+    RegrasModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
