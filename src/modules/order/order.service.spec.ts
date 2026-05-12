@@ -16,6 +16,7 @@ import { PaymentGatewayService } from '../payment/payment-gateway.service';
 import { EntregaService } from '../entrega/entrega.service';
 import { CreditoService } from '../credito/credito.service';
 import { IndicacaoService } from '../indicacao/indicacao.service';
+import { EmpresaService } from '../empresa/empresa.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,6 +66,7 @@ describe('OrderService', () => {
   let entregaService: Record<string, any>;
   let creditoService: Record<string, any>;
   let indicacaoService: Record<string, any>;
+  let empresaService: Record<string, any>;
   let ordersQueue: Record<string, any>;
 
   beforeEach(async () => {
@@ -132,6 +134,10 @@ describe('OrderService', () => {
       processarConversao: jest.fn().mockResolvedValue(undefined),
     };
 
+    empresaService = {
+      getDescontoAtivo: jest.fn().mockResolvedValue(null),
+    };
+
     ordersQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
@@ -148,6 +154,7 @@ describe('OrderService', () => {
         { provide: EntregaService, useValue: entregaService },
         { provide: CreditoService, useValue: creditoService },
         { provide: IndicacaoService, useValue: indicacaoService },
+        { provide: EmpresaService, useValue: empresaService },
         { provide: getQueueToken('orders'), useValue: ordersQueue },
       ],
     }).compile();
@@ -614,6 +621,52 @@ describe('OrderService', () => {
       expect(creditoService.consumir).not.toHaveBeenCalled();
       const createCall = prisma.pedido.create.mock.calls[0][0];
       expect(Number(createCall.data.valorCreditoUsado)).toBe(0);
+    });
+
+    it('applies desconto da empresa e persiste empresaId quando cliente eh PJ aprovado', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      empresaService.getDescontoAtivo.mockResolvedValue({ empresaId: 'emp-1', descontoPct: 10 });
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      // subtotal 200, desconto 10% = 20, total = 200 - 20 = 180
+      expect(Number(createCall.data.valorDesconto)).toBe(20);
+      expect(Number(createCall.data.valorTotal)).toBe(180);
+      expect(createCall.data.empresaId).toBe('emp-1');
+    });
+
+    it('soma desconto da empresa ao desconto do cupom', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(200) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      cupomService.validate.mockResolvedValue({
+        desconto: 30,
+        cupom: { id: 'cup-x' },
+      });
+      empresaService.getDescontoAtivo.mockResolvedValue({ empresaId: 'emp-1', descontoPct: 5 });
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        cupomCodigo: 'ABC',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      // cupom 30 + empresa 200 * 5% = 10 = 40 total desconto; total = 200 - 40 = 160
+      expect(Number(createCall.data.valorDesconto)).toBe(40);
+      expect(Number(createCall.data.valorTotal)).toBe(160);
     });
 
     it('should not call reservarSlot when slotId is not provided', async () => {

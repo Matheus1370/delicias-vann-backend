@@ -12,6 +12,7 @@ datasource db {
 
 enum Role {
   CLIENTE
+  CLIENTE_EMPRESA
   OPERADOR
   GERENTE
   ADMINISTRADOR
@@ -153,6 +154,7 @@ model Usuario {
   ocasioes         OcasiaoCliente[]
   indicacoesFeitas Indicacao[]      @relation("Indicador")
   indicacoesRecebidas Indicacao[]   @relation("Indicado")
+  empresasContato  Empresa[]        @relation("ContatoEmpresa")
 
   @@index([email])
   @@index([role])
@@ -456,6 +458,7 @@ model Pedido {
   valorReembolso       Decimal?      @db.Decimal(10, 2)
   valorCreditoFuturo   Decimal?      @db.Decimal(10, 2)
   valorCreditoUsado    Decimal       @default(0) @db.Decimal(10, 2)
+  empresaId            String?
   observacoes          String?
   canceladoMotivo      String?
   canceladoPor         String?
@@ -478,6 +481,7 @@ model Pedido {
   notificacoes         Notificacao[]
   avaliacao            Avaliacao?
   fotosEntrega         FotoEntrega[]
+  empresa              Empresa?      @relation(fields: [empresaId], references: [id])
 
   @@index([clienteId, status, createdAt(sort: Desc)])
   @@index([status, dataAgendamento])
@@ -515,6 +519,26 @@ model FotoEntrega {
 
   @@index([pedidoId])
   @@map("fotos_entrega")
+}
+
+model Empresa {
+  id                String   @id @default(uuid())
+  razaoSocial       String
+  cnpj              String   @unique @db.VarChar(18)
+  nomeFantasia      String?
+  contatoPadraoId   String
+  condicaoPagamento String?  // "30dias", "boleto"
+  descontoPadrao    Decimal  @default(0) @db.Decimal(5, 2)
+  status            String   @default("PENDENTE") // PENDENTE | APROVADA | REJEITADA
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  contatoPadrao     Usuario  @relation("ContatoEmpresa", fields: [contatoPadraoId], references: [id])
+  pedidos           Pedido[]
+
+  @@index([contatoPadraoId])
+  @@index([status])
+  @@map("empresas")
 }
 
 model Indicacao {

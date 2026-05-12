@@ -16,6 +16,7 @@ import { PaymentGatewayService } from '../payment/payment-gateway.service';
 import { EntregaService } from '../entrega/entrega.service';
 import { CreditoService } from '../credito/credito.service';
 import { IndicacaoService } from '../indicacao/indicacao.service';
+import { EmpresaService } from '../empresa/empresa.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
@@ -62,6 +63,7 @@ export class OrderService {
     private entrega: EntregaService,
     private credito: CreditoService,
     private indicacao: IndicacaoService,
+    private empresa: EmpresaService,
     @InjectQueue('orders') private ordersQueue: Queue,
   ) {}
 
@@ -161,6 +163,15 @@ export class OrderService {
       cupomId = result.cupom.id;
     }
 
+    // Desconto corporativo (Fase 3 / 5.5): cliente PJ aprovado ganha % sobre o subtotal
+    const descontoEmpresa = await this.empresa.getDescontoAtivo(clienteId);
+    let empresaId: string | undefined;
+    if (descontoEmpresa) {
+      const descontoValor = (valorSubtotal * descontoEmpresa.descontoPct) / 100;
+      valorDesconto += descontoValor;
+      empresaId = descontoEmpresa.empresaId;
+    }
+
     // Vale-bolo: aplica credito do cliente, sem deixar valorTotal negativo
     let valorCreditoUsado = 0;
     if (data.usarCredito) {
@@ -206,6 +217,7 @@ export class OrderService {
           clienteId,
           origem: (data.origem as any) ?? 'ONLINE',
           modalidadeEntrega: data.modalidadeEntrega as any,
+          empresaId: empresaId ?? null,
           dataAgendamento: dataAgendamentoFinal ? new Date(dataAgendamentoFinal) : null,
           horaFestaPrevista: data.horaFestaPrevista ? new Date(data.horaFestaPrevista) : null,
           bufferHorasAntes: bufferHoras,
