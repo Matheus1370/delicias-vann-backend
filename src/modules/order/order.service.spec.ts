@@ -353,6 +353,110 @@ describe('OrderService', () => {
       ).resolves.toBeTruthy();
     });
 
+    it('derives dataAgendamento from horaFestaPrevista - bufferHorasAntes when provided', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      // Festa 6 dias no futuro às 16h, buffer 2h
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000);
+      festa.setHours(16, 0, 0, 0);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+        horaFestaPrevista: festa.toISOString(),
+        bufferHorasAntes: 2,
+      } as any);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      const despachoEsperado = new Date(festa.getTime() - 2 * 60 * 60 * 1000);
+      expect(new Date(createCall.data.dataAgendamento).getTime()).toBe(despachoEsperado.getTime());
+      expect(new Date(createCall.data.horaFestaPrevista).getTime()).toBe(festa.getTime());
+      expect(createCall.data.bufferHorasAntes).toBe(2);
+    });
+
+    it('rejects MOTOBOY_LOCAL with buffer < 2h', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'MOTOBOY_LOCAL',
+          horaFestaPrevista: festa,
+          bufferHorasAntes: 1,
+        } as any),
+      ).rejects.toThrow(/buffer/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts UBER_DIRECT with buffer = 1h (minimum allowed)', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'UBER_DIRECT',
+          horaFestaPrevista: festa,
+          bufferHorasAntes: 1,
+        } as any),
+      ).resolves.toBeTruthy();
+    });
+
+    it('accepts RETIRADA_BALCAO with buffer = 0', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          horaFestaPrevista: festa,
+          bufferHorasAntes: 0,
+        } as any),
+      ).resolves.toBeTruthy();
+    });
+
+    it('falls back to provided dataAgendamento when horaFestaPrevista is absent', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const data = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        dataAgendamento: data,
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(new Date(createCall.data.dataAgendamento).getTime()).toBe(new Date(data).getTime());
+      expect(createCall.data.horaFestaPrevista).toBeNull();
+    });
+
     it('should not call reservarSlot when slotId is not provided', async () => {
       const produto = makeProduto();
       const createdPedido = makePedido();

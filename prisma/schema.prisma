@@ -446,6 +446,8 @@ model Pedido {
   valorTotal           Decimal       @db.Decimal(10, 2)
   numeroPessoas        Int?
   ocasiao              String?
+  horaFestaPrevista    DateTime?
+  bufferHorasAntes     Int           @default(2)
   observacoes          String?
   canceladoMotivo      String?
   canceladoPor         String?

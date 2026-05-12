@@ -34,7 +34,16 @@ interface CreateOrderData {
   assinaturaId?: string;
   numeroPessoas?: number;
   ocasiao?: string;
+  horaFestaPrevista?: string;
+  bufferHorasAntes?: number;
 }
+
+const BUFFER_MIN_HORAS: Record<string, number> = {
+  RETIRADA_BALCAO: 0,
+  MOTOBOY_LOCAL: 2,
+  UBER_DIRECT: 1,
+  NOVENTA_NOVE_ENTREGAS: 1,
+};
 
 @Injectable()
 export class OrderService {
@@ -68,6 +77,21 @@ export class OrderService {
 
     if (produtos.length !== data.itens.length) {
       throw new BadRequestException('Um ou mais produtos não estão disponíveis');
+    }
+
+    // Janela festa/buffer: deriva dataAgendamento a partir de horaFestaPrevista
+    let dataAgendamentoFinal: string | undefined = data.dataAgendamento;
+    const bufferHoras = data.bufferHorasAntes ?? 2;
+    if (data.horaFestaPrevista) {
+      const minBuffer = BUFFER_MIN_HORAS[data.modalidadeEntrega] ?? 0;
+      if (bufferHoras < minBuffer) {
+        throw new UnprocessableEntityException(
+          `Buffer de ${bufferHoras}h não atende a modalidade ${data.modalidadeEntrega} (mínimo ${minBuffer}h).`,
+        );
+      }
+      const festaTs = new Date(data.horaFestaPrevista).getTime();
+      const despacho = new Date(festaTs - bufferHoras * 60 * 60 * 1000);
+      dataAgendamentoFinal = despacho.toISOString();
     }
 
     // Valida modalidade contra a interseção das modalidadesPermitidas de cada item
@@ -136,8 +160,8 @@ export class OrderService {
     });
     const maxLeadHoras = Math.max(...leadTimePorItem, 24);
 
-    if (data.dataAgendamento) {
-      const ts = new Date(data.dataAgendamento).getTime();
+    if (dataAgendamentoFinal) {
+      const ts = new Date(dataAgendamentoFinal).getTime();
       const minTs = Date.now() + maxLeadHoras * 60 * 60 * 1000;
       if (ts < minTs) {
         const dias = Math.ceil(maxLeadHoras / 24);
@@ -155,7 +179,9 @@ export class OrderService {
           clienteId,
           origem: (data.origem as any) ?? 'ONLINE',
           modalidadeEntrega: data.modalidadeEntrega as any,
-          dataAgendamento: data.dataAgendamento ? new Date(data.dataAgendamento) : null,
+          dataAgendamento: dataAgendamentoFinal ? new Date(dataAgendamentoFinal) : null,
+          horaFestaPrevista: data.horaFestaPrevista ? new Date(data.horaFestaPrevista) : null,
+          bufferHorasAntes: bufferHoras,
           enderecoEntregaId: data.enderecoEntregaId ?? null,
           cupomId,
           assinaturaId: data.assinaturaId,
