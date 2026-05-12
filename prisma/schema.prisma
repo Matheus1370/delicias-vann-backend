@@ -149,6 +149,7 @@ model Usuario {
   aprovacoes       MargemAprovacao[]
   assinaturas      Assinatura[]
   avaliacoes       Avaliacao[]
+  creditos         CreditoCliente[]
 
   @@index([email])
   @@index([role])
@@ -451,6 +452,7 @@ model Pedido {
   janelaReembolsoHoras Int           @default(48)
   valorReembolso       Decimal?      @db.Decimal(10, 2)
   valorCreditoFuturo   Decimal?      @db.Decimal(10, 2)
+  valorCreditoUsado    Decimal       @default(0) @db.Decimal(10, 2)
   observacoes          String?
   canceladoMotivo      String?
   canceladoPor         String?
@@ -510,6 +512,25 @@ model FotoEntrega {
 
   @@index([pedidoId])
   @@map("fotos_entrega")
+}
+
+model CreditoCliente {
+  id              String   @id @default(uuid())
+  clienteId       String
+  valor           Decimal  @db.Decimal(10, 2)
+  valorUsado      Decimal  @default(0) @db.Decimal(10, 2)
+  motivo          String
+  pedidoOrigemId  String?
+  expiraEm        DateTime?
+  ativo           Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  cliente         Usuario  @relation(fields: [clienteId], references: [id])
+
+  @@index([clienteId, ativo])
+  @@index([expiraEm])
+  @@map("creditos_cliente")
 }
 
 model ConfiguracaoEntrega {

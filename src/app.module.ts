@@ -20,6 +20,7 @@ import { AvaliacaoModule } from './modules/avaliacao/avaliacao.module';
 import { UserModule } from './modules/user/user.module';
 import { RegrasModule } from './modules/regras/regras.module';
 import { EntregaModule } from './modules/entrega/entrega.module';
+import { CreditoModule } from './modules/credito/credito.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -66,6 +67,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     ReportModule,
     RegrasModule,
     EntregaModule,
+    CreditoModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

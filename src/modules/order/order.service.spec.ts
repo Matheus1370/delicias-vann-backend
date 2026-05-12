@@ -14,6 +14,7 @@ import { AuditService } from '../audit/audit.service';
 import { CupomService } from '../cupom/cupom.service';
 import { PaymentGatewayService } from '../payment/payment-gateway.service';
 import { EntregaService } from '../entrega/entrega.service';
+import { CreditoService } from '../credito/credito.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,6 +62,7 @@ describe('OrderService', () => {
   let cupomService: Record<string, any>;
   let gatewayService: Record<string, any>;
   let entregaService: Record<string, any>;
+  let creditoService: Record<string, any>;
   let ordersQueue: Record<string, any>;
 
   beforeEach(async () => {
@@ -118,6 +120,12 @@ describe('OrderService', () => {
       computeFrete: jest.fn().mockResolvedValue(0),
     };
 
+    creditoService = {
+      saldoTotal: jest.fn().mockResolvedValue(0),
+      consumir: jest.fn().mockResolvedValue(undefined),
+      gerar: jest.fn().mockResolvedValue(undefined),
+    };
+
     ordersQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
@@ -132,6 +140,7 @@ describe('OrderService', () => {
         { provide: CupomService, useValue: cupomService },
         { provide: PaymentGatewayService, useValue: gatewayService },
         { provide: EntregaService, useValue: entregaService },
+        { provide: CreditoService, useValue: creditoService },
         { provide: getQueueToken('orders'), useValue: ordersQueue },
       ],
     }).compile();
@@ -537,6 +546,69 @@ describe('OrderService', () => {
       expect(Number(createCall.data.valorTotal)).toBe(300);
     });
 
+    it('applies credito do cliente when usarCredito is true', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      creditoService.saldoTotal.mockResolvedValue(80);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        usarCredito: true,
+      } as any);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      // subtotal 200, credito 80, total = 200 - 80 = 120
+      expect(Number(createCall.data.valorCreditoUsado)).toBe(80);
+      expect(Number(createCall.data.valorTotal)).toBe(120);
+      expect(creditoService.consumir).toHaveBeenCalledWith('cliente-1', 80, expect.anything());
+    });
+
+    it('caps credito usage to keep valorTotal non-negative', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(40) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      creditoService.saldoTotal.mockResolvedValue(500); // saldo grande
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        usarCredito: true,
+      } as any);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      // subtotal 40, credito 40 (não pode passar de 40), total = 0
+      expect(Number(createCall.data.valorCreditoUsado)).toBe(40);
+      expect(Number(createCall.data.valorTotal)).toBe(0);
+      expect(creditoService.consumir).toHaveBeenCalledWith('cliente-1', 40, expect.anything());
+    });
+
+    it('does not consume credito when usarCredito is false', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      creditoService.saldoTotal.mockResolvedValue(80);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      expect(creditoService.consumir).not.toHaveBeenCalled();
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorCreditoUsado)).toBe(0);
+    });
+
     it('should not call reservarSlot when slotId is not provided', async () => {
       const produto = makeProduto();
       const createdPedido = makePedido();
@@ -770,6 +842,54 @@ describe('OrderService', () => {
         (c: any[]) => c[0].data?.valorReembolso !== undefined,
       );
       expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+    });
+
+    it('generates a CreditoCliente when middle tier cancellation produces valorCreditoFuturo > 0', async () => {
+      const dataAgendamento = new Date(Date.now() + 36 * 60 * 60 * 1000); // 36h
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 200,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Festa adiada');
+
+      expect(creditoService.gerar).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clienteId: 'c1',
+          valor: 100,
+          motivo: expect.stringMatching(/cancelamento/i),
+          pedidoOrigemId: 'pedido-1',
+          expiraEm: null,
+        }),
+      );
+    });
+
+    it('does not generate CreditoCliente when full refund', async () => {
+      const dataAgendamento = new Date(Date.now() + 72 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', '?');
+
+      expect(creditoService.gerar).not.toHaveBeenCalled();
     });
 
     it('rejects cancellation when status is EM_PRODUCAO or later', async () => {

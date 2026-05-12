@@ -14,6 +14,7 @@ import { AuditService } from '../audit/audit.service';
 import { CupomService } from '../cupom/cupom.service';
 import { PaymentGatewayService } from '../payment/payment-gateway.service';
 import { EntregaService } from '../entrega/entrega.service';
+import { CreditoService } from '../credito/credito.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
@@ -37,6 +38,7 @@ interface CreateOrderData {
   ocasiao?: string;
   horaFestaPrevista?: string;
   bufferHorasAntes?: number;
+  usarCredito?: boolean;
 }
 
 const BUFFER_MIN_HORAS: Record<string, number> = {
@@ -57,6 +59,7 @@ export class OrderService {
     @Inject(forwardRef(() => PaymentGatewayService))
     private gateway: PaymentGatewayService,
     private entrega: EntregaService,
+    private credito: CreditoService,
     @InjectQueue('orders') private ordersQueue: Queue,
   ) {}
 
@@ -156,6 +159,14 @@ export class OrderService {
       cupomId = result.cupom.id;
     }
 
+    // Vale-bolo: aplica credito do cliente, sem deixar valorTotal negativo
+    let valorCreditoUsado = 0;
+    if (data.usarCredito) {
+      const saldoCredito = await this.credito.saldoTotal(clienteId);
+      const valorPosCupom = Math.max(0, valorSubtotal + valorFrete - valorDesconto);
+      valorCreditoUsado = Math.min(saldoCredito, valorPosCupom);
+    }
+
     // Calcula lead time por item somando produto.leadTimeHoras + extras das opcoes escolhidas
     const leadTimePorItem = data.itens.map((item) => {
       const produto = produtos.find((p) => p.id === item.produtoId)!;
@@ -202,7 +213,8 @@ export class OrderService {
           valorSubtotal,
           valorFrete,
           valorDesconto,
-          valorTotal: valorSubtotal + valorFrete - valorDesconto,
+          valorCreditoUsado,
+          valorTotal: Math.max(0, valorSubtotal + valorFrete - valorDesconto - valorCreditoUsado),
           numeroPessoas: data.numeroPessoas ?? null,
           ocasiao: data.ocasiao ?? null,
           observacoes: data.observacoes,
@@ -231,6 +243,10 @@ export class OrderService {
         { pedidoId: criado.id },
         { delay: 30 * 60 * 1000 },
       );
+
+      if (valorCreditoUsado > 0) {
+        await this.credito.consumir(clienteId, valorCreditoUsado, tx);
+      }
 
       return criado;
     });
@@ -525,6 +541,17 @@ export class OrderService {
       clienteId,
       motivo || 'Cancelado pelo cliente',
     );
+
+    // Gera credito real (Fase 3) quando ha valorCreditoFuturo > 0
+    if (valorCreditoFuturo > 0) {
+      await this.credito.gerar({
+        clienteId,
+        valor: valorCreditoFuturo,
+        motivo: `cancelamento véspera (pedido ${pedidoId.slice(0, 8)})`,
+        pedidoOrigemId: pedidoId,
+        expiraEm: null,
+      });
+    }
 
     return this.prisma.pedido.update({
       where: { id: pedidoId },
