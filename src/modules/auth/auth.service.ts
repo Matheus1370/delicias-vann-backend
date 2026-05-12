@@ -69,13 +69,30 @@ export class AuthService {
     return this.login(user);
   }
 
-  async register(data: { nome: string; email: string; senha: string; telefone?: string }) {
+  async register(data: { nome: string; email: string; senha: string; telefone?: string; refCodigo?: string }) {
     const exists = await this.prisma.usuario.findUnique({ where: { email: data.email } });
     if (exists) throw new ForbiddenException('E-mail já cadastrado');
     const senhaHash = await argon2.hash(data.senha);
     const user = await this.prisma.usuario.create({
       data: { nome: data.nome, email: data.email, telefone: data.telefone, senhaHash },
     });
+
+    if (data.refCodigo) {
+      try {
+        const indicacao = await this.prisma.indicacao.findUnique({
+          where: { codigo: data.refCodigo.toUpperCase() },
+        });
+        if (indicacao && !indicacao.indicadoUsuarioId && indicacao.indicadorId !== user.id) {
+          await this.prisma.indicacao.update({
+            where: { id: indicacao.id },
+            data: { indicadoUsuarioId: user.id },
+          });
+        }
+      } catch {
+        // não bloqueia o cadastro se a indicacao falhar
+      }
+    }
+
     const { senhaHash: _, ...result } = user;
     return result;
   }

@@ -15,6 +15,7 @@ import { CupomService } from '../cupom/cupom.service';
 import { PaymentGatewayService } from '../payment/payment-gateway.service';
 import { EntregaService } from '../entrega/entrega.service';
 import { CreditoService } from '../credito/credito.service';
+import { IndicacaoService } from '../indicacao/indicacao.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
@@ -60,6 +61,7 @@ export class OrderService {
     private gateway: PaymentGatewayService,
     private entrega: EntregaService,
     private credito: CreditoService,
+    private indicacao: IndicacaoService,
     @InjectQueue('orders') private ordersQueue: Queue,
   ) {}
 
@@ -362,6 +364,11 @@ export class OrderService {
         { pedidoId },
         { delay: 48 * 60 * 60 * 1000 },
       );
+    }
+
+    // Programa de indicação: quando pedido entra em PAGO, processa eventual conversão
+    if (novoStatus === 'PAGO') {
+      await this.indicacao.processarConversao(pedido.clienteId, pedidoId);
     }
 
     await this.audit.log({

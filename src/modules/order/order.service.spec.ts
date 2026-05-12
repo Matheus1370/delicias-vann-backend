@@ -15,6 +15,7 @@ import { CupomService } from '../cupom/cupom.service';
 import { PaymentGatewayService } from '../payment/payment-gateway.service';
 import { EntregaService } from '../entrega/entrega.service';
 import { CreditoService } from '../credito/credito.service';
+import { IndicacaoService } from '../indicacao/indicacao.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -63,6 +64,7 @@ describe('OrderService', () => {
   let gatewayService: Record<string, any>;
   let entregaService: Record<string, any>;
   let creditoService: Record<string, any>;
+  let indicacaoService: Record<string, any>;
   let ordersQueue: Record<string, any>;
 
   beforeEach(async () => {
@@ -126,6 +128,10 @@ describe('OrderService', () => {
       gerar: jest.fn().mockResolvedValue(undefined),
     };
 
+    indicacaoService = {
+      processarConversao: jest.fn().mockResolvedValue(undefined),
+    };
+
     ordersQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
@@ -141,6 +147,7 @@ describe('OrderService', () => {
         { provide: PaymentGatewayService, useValue: gatewayService },
         { provide: EntregaService, useValue: entregaService },
         { provide: CreditoService, useValue: creditoService },
+        { provide: IndicacaoService, useValue: indicacaoService },
         { provide: getQueueToken('orders'), useValue: ordersQueue },
       ],
     }).compile();

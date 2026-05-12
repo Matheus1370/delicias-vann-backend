@@ -151,6 +151,8 @@ model Usuario {
   avaliacoes       Avaliacao[]
   creditos         CreditoCliente[]
   ocasioes         OcasiaoCliente[]
+  indicacoesFeitas Indicacao[]      @relation("Indicador")
+  indicacoesRecebidas Indicacao[]   @relation("Indicado")
 
   @@index([email])
   @@index([role])
@@ -513,6 +515,27 @@ model FotoEntrega {
 
   @@index([pedidoId])
   @@map("fotos_entrega")
+}
+
+model Indicacao {
+  id                 String   @id @default(uuid())
+  indicadorId        String
+  indicadoEmail      String?
+  indicadoUsuarioId  String?
+  codigo             String   @unique
+  pedidoConvertidoId String?
+  cupomRecompensaId  String?
+  recompensaValor    Decimal? @db.Decimal(8, 2)
+  status             String   @default("PENDENTE") // PENDENTE | CONVERTIDA
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  indicador          Usuario  @relation("Indicador", fields: [indicadorId], references: [id])
+  indicadoUsuario    Usuario? @relation("Indicado", fields: [indicadoUsuarioId], references: [id])
+
+  @@index([indicadorId])
+  @@index([indicadoUsuarioId])
+  @@map("indicacoes")
 }
 
 model OcasiaoCliente {
