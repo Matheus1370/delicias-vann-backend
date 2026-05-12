@@ -13,6 +13,7 @@ import { NotificationService } from '../notification/notification.service';
 import { AuditService } from '../audit/audit.service';
 import { CupomService } from '../cupom/cupom.service';
 import { PaymentGatewayService } from '../payment/payment-gateway.service';
+import { EntregaService } from '../entrega/entrega.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
@@ -55,6 +56,7 @@ export class OrderService {
     private cupom: CupomService,
     @Inject(forwardRef(() => PaymentGatewayService))
     private gateway: PaymentGatewayService,
+    private entrega: EntregaService,
     @InjectQueue('orders') private ordersQueue: Queue,
   ) {}
 
@@ -134,6 +136,18 @@ export class OrderService {
       0,
     );
 
+    // Valida mínimo de pedido por modalidade + computa frete
+    const configEntrega = await this.entrega.getByModalidade(data.modalidadeEntrega);
+    if (configEntrega) {
+      const minimo = Number(configEntrega.valorMinimoPedido);
+      if (minimo > 0 && valorSubtotal < minimo) {
+        throw new UnprocessableEntityException(
+          `Valor mínimo de R$ ${minimo.toFixed(2)} para a modalidade ${data.modalidadeEntrega}.`,
+        );
+      }
+    }
+    const valorFrete = await this.entrega.computeFrete(data.modalidadeEntrega, valorSubtotal);
+
     let valorDesconto = 0;
     let cupomId: string | undefined;
     if (data.cupomCodigo) {
@@ -186,9 +200,9 @@ export class OrderService {
           cupomId,
           assinaturaId: data.assinaturaId,
           valorSubtotal,
-          valorFrete: 0,
+          valorFrete,
           valorDesconto,
-          valorTotal: valorSubtotal - valorDesconto,
+          valorTotal: valorSubtotal + valorFrete - valorDesconto,
           numeroPessoas: data.numeroPessoas ?? null,
           ocasiao: data.ocasiao ?? null,
           observacoes: data.observacoes,

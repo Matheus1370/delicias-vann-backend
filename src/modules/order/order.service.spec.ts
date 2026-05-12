@@ -13,6 +13,7 @@ import { NotificationService } from '../notification/notification.service';
 import { AuditService } from '../audit/audit.service';
 import { CupomService } from '../cupom/cupom.service';
 import { PaymentGatewayService } from '../payment/payment-gateway.service';
+import { EntregaService } from '../entrega/entrega.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,6 +60,7 @@ describe('OrderService', () => {
   let auditService: Record<string, any>;
   let cupomService: Record<string, any>;
   let gatewayService: Record<string, any>;
+  let entregaService: Record<string, any>;
   let ordersQueue: Record<string, any>;
 
   beforeEach(async () => {
@@ -111,6 +113,11 @@ describe('OrderService', () => {
       }),
     };
 
+    entregaService = {
+      getByModalidade: jest.fn().mockResolvedValue(null),
+      computeFrete: jest.fn().mockResolvedValue(0),
+    };
+
     ordersQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
@@ -124,6 +131,7 @@ describe('OrderService', () => {
         { provide: AuditService, useValue: auditService },
         { provide: CupomService, useValue: cupomService },
         { provide: PaymentGatewayService, useValue: gatewayService },
+        { provide: EntregaService, useValue: entregaService },
         { provide: getQueueToken('orders'), useValue: ordersQueue },
       ],
     }).compile();
@@ -455,6 +463,78 @@ describe('OrderService', () => {
       const createCall = prisma.pedido.create.mock.calls[0][0];
       expect(new Date(createCall.data.dataAgendamento).getTime()).toBe(new Date(data).getTime());
       expect(createCall.data.horaFestaPrevista).toBeNull();
+    });
+
+    it('rejects creation when subtotal is below the modalidade minimum', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(30) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      entregaService.getByModalidade.mockResolvedValue({
+        modalidade: 'UBER_DIRECT',
+        valorMinimoPedido: new Prisma.Decimal(80),
+        valorFreteBase: new Prisma.Decimal(22),
+        valorFreteGratisAcimaDe: null,
+      });
+
+      // 30 * 2 = 60 < 80
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+          modalidadeEntrega: 'UBER_DIRECT',
+        }),
+      ).rejects.toThrow(/m[ií]nimo/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('persists valorFrete from EntregaService.computeFrete', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      entregaService.getByModalidade.mockResolvedValue({
+        modalidade: 'MOTOBOY_LOCAL',
+        valorMinimoPedido: new Prisma.Decimal(0),
+        valorFreteBase: new Prisma.Decimal(15),
+        valorFreteGratisAcimaDe: new Prisma.Decimal(200),
+      });
+      entregaService.computeFrete.mockResolvedValue(15);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+      });
+
+      expect(entregaService.computeFrete).toHaveBeenCalledWith('MOTOBOY_LOCAL', 100);
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorFrete)).toBe(15);
+      expect(Number(createCall.data.valorTotal)).toBe(115); // 100 subtotal + 15 frete
+    });
+
+    it('zeroes valorFrete when computeFrete returns 0 (free shipping reached)', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      entregaService.getByModalidade.mockResolvedValue({
+        modalidade: 'MOTOBOY_LOCAL',
+        valorMinimoPedido: new Prisma.Decimal(0),
+        valorFreteBase: new Prisma.Decimal(15),
+        valorFreteGratisAcimaDe: new Prisma.Decimal(200),
+      });
+      entregaService.computeFrete.mockResolvedValue(0);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 3 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorFrete)).toBe(0);
+      expect(Number(createCall.data.valorTotal)).toBe(300);
     });
 
     it('should not call reservarSlot when slotId is not provided', async () => {

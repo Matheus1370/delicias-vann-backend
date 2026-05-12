@@ -509,6 +509,20 @@ model FotoEntrega {
   @@map("fotos_entrega")
 }
 
+model ConfiguracaoEntrega {
+  id                      String            @id @default(uuid())
+  modalidade              EntregaModalidade @unique
+  valorFreteBase          Decimal           @default(0) @db.Decimal(8, 2)
+  valorMinimoPedido       Decimal           @default(0) @db.Decimal(10, 2)
+  valorFreteGratisAcimaDe Decimal?          @db.Decimal(10, 2)
+  raioKm                  Int?
+  ativa                   Boolean           @default(true)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  @@map("configuracoes_entrega")
+}
+
 model RegraCombinacao {
   id        String   @id @default(uuid())
   nome      String

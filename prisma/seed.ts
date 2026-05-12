@@ -384,6 +384,57 @@ async function main() {
     },
   });
 
+  // Configurações de entrega (4.5): minimo, frete base e frete gratis por modalidade
+  const configsEntrega: Array<{
+    modalidade: 'RETIRADA_BALCAO' | 'MOTOBOY_LOCAL' | 'UBER_DIRECT' | 'NOVENTA_NOVE_ENTREGAS';
+    valorFreteBase: number;
+    valorMinimoPedido: number;
+    valorFreteGratisAcimaDe: number | null;
+    raioKm: number | null;
+  }> = [
+    {
+      modalidade: 'RETIRADA_BALCAO',
+      valorFreteBase: 0,
+      valorMinimoPedido: 0,
+      valorFreteGratisAcimaDe: null,
+      raioKm: null,
+    },
+    {
+      modalidade: 'MOTOBOY_LOCAL',
+      valorFreteBase: 15,
+      valorMinimoPedido: 0,
+      valorFreteGratisAcimaDe: 200,
+      raioKm: 10,
+    },
+    {
+      modalidade: 'UBER_DIRECT',
+      valorFreteBase: 22,
+      valorMinimoPedido: 80,
+      valorFreteGratisAcimaDe: null,
+      raioKm: null,
+    },
+    {
+      modalidade: 'NOVENTA_NOVE_ENTREGAS',
+      valorFreteBase: 20,
+      valorMinimoPedido: 80,
+      valorFreteGratisAcimaDe: null,
+      raioKm: null,
+    },
+  ];
+
+  for (const c of configsEntrega) {
+    await prisma.configuracaoEntrega.upsert({
+      where: { modalidade: c.modalidade },
+      update: {
+        valorFreteBase: c.valorFreteBase,
+        valorMinimoPedido: c.valorMinimoPedido,
+        valorFreteGratisAcimaDe: c.valorFreteGratisAcimaDe ?? null,
+        raioKm: c.raioKm,
+      },
+      create: c,
+    });
+  }
+
   // Regras de combinação inviável (proteção da cozinha)
   const regras: Array<{
     nome: string;
