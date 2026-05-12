@@ -667,11 +667,14 @@ describe('OrderService', () => {
       expect(result.status).toBe('CANCELADO');
     });
 
-    it('should cancel PAGO order within 30 min window', async () => {
+    it('should cancel PAGO order with 100% refund when despacho > janelaReembolsoHoras', async () => {
+      const dataAgendamento = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72h
       const pedido = makePedido({
         status: 'PAGO',
         clienteId: 'c1',
-        createdAt: new Date(), // just now => within 30 min
+        valorTotal: 100,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
         cliente: {},
       });
       prisma.pedido.findUnique
@@ -679,15 +682,102 @@ describe('OrderService', () => {
         .mockResolvedValueOnce(pedido);
       prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
 
-      const result = await service.cancelByCliente('pedido-1', 'c1', 'Mudei de ideia');
-      expect(result.status).toBe('CANCELADO');
+      await service.cancelByCliente('pedido-1', 'c1', 'Mudei de ideia');
+
+      // updateStatus.update foi chamado uma vez (transição), reembolso atualizado em outra chamada
+      const updateCalls = prisma.pedido.update.mock.calls;
+      const reembolsoCall = updateCalls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(reembolsoCall).toBeDefined();
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+      expect(reembolsoCall[0].data.valorCreditoFuturo == null ||
+        Number(reembolsoCall[0].data.valorCreditoFuturo) === 0).toBe(true);
     });
 
-    it('should throw ForbiddenException when cancellation window expired', async () => {
+    it('should split 50% refund + 50% credito futuro when despacho is in middle tier', async () => {
+      const dataAgendamento = new Date(Date.now() + 36 * 60 * 60 * 1000); // 36h
       const pedido = makePedido({
         status: 'PAGO',
         clienteId: 'c1',
-        createdAt: new Date(Date.now() - 60 * 60 * 1000), // 1 hour ago
+        valorTotal: 200,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Festa adiada');
+
+      const updateCalls = prisma.pedido.update.mock.calls;
+      const reembolsoCall = updateCalls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(reembolsoCall).toBeDefined();
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+      expect(Number(reembolsoCall[0].data.valorCreditoFuturo)).toBe(100);
+    });
+
+    it('should cancel with 0% refund when despacho is closer than half janelaReembolsoHoras', async () => {
+      const dataAgendamento = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12h
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 150,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Em cima da hora');
+
+      const updateCalls = prisma.pedido.update.mock.calls;
+      const reembolsoCall = updateCalls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(reembolsoCall).toBeDefined();
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(0);
+      expect(reembolsoCall[0].data.valorCreditoFuturo == null ||
+        Number(reembolsoCall[0].data.valorCreditoFuturo) === 0).toBe(true);
+    });
+
+    it('honors a custom janelaReembolsoHoras on the pedido', async () => {
+      // janela 24h: meio é 12h. Despacho a 18h => 100%
+      const dataAgendamento = new Date(Date.now() + 30 * 60 * 60 * 1000); // 30h
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento,
+        janelaReembolsoHoras: 24,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', '?');
+
+      const reembolsoCall = prisma.pedido.update.mock.calls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+    });
+
+    it('rejects cancellation when status is EM_PRODUCAO or later', async () => {
+      const pedido = makePedido({
+        status: 'EM_PRODUCAO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento: new Date(Date.now() + 72 * 60 * 60 * 1000),
       });
       prisma.pedido.findUnique.mockResolvedValue(pedido);
 

@@ -448,6 +448,9 @@ model Pedido {
   ocasiao              String?
   horaFestaPrevista    DateTime?
   bufferHorasAntes     Int           @default(2)
+  janelaReembolsoHoras Int           @default(48)
+  valorReembolso       Decimal?      @db.Decimal(10, 2)
+  valorCreditoFuturo   Decimal?      @db.Decimal(10, 2)
   observacoes          String?
   canceladoMotivo      String?
   canceladoPor         String?

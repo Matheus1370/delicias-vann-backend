@@ -486,23 +486,53 @@ export class OrderService {
       throw new NotFoundException('Pedido não encontrado');
     }
 
-    const podeCancelar =
-      pedido.status === 'AGUARDANDO_PAGAMENTO' ||
-      (pedido.status === 'PAGO' &&
-        Date.now() - pedido.createdAt.getTime() < 30 * 60 * 1000);
-
-    if (!podeCancelar) {
+    const statusCancelaveis: string[] = ['AGUARDANDO_PAGAMENTO', 'PAGO'];
+    if (!statusCancelaveis.includes(pedido.status)) {
       throw new ForbiddenException(
-        'Pedido não pode mais ser cancelado. Entre em contato conosco.',
+        'Pedido já entrou em produção. Entre em contato conosco para cancelar.',
       );
     }
 
-    return this.updateStatus(
+    // Política de reembolso: usa dataAgendamento (já é o despacho derivado de festa - buffer)
+    const janelaTotal = pedido.janelaReembolsoHoras ?? 48;
+    const janelaMeio = janelaTotal / 2;
+    const valorTotal = Number(pedido.valorTotal);
+    let valorReembolso = 0;
+    let valorCreditoFuturo = 0;
+
+    if (pedido.status === 'AGUARDANDO_PAGAMENTO') {
+      // Sem pagamento confirmado, nada a reembolsar
+      valorReembolso = 0;
+    } else if (pedido.dataAgendamento) {
+      const horasAteDespacho =
+        (pedido.dataAgendamento.getTime() - Date.now()) / (60 * 60 * 1000);
+      if (horasAteDespacho >= janelaTotal) {
+        valorReembolso = valorTotal;
+      } else if (horasAteDespacho >= janelaMeio) {
+        valorReembolso = valorTotal / 2;
+        valorCreditoFuturo = valorTotal / 2;
+      } else {
+        valorReembolso = 0;
+      }
+    } else {
+      // Sem dataAgendamento conhecida: política conservadora — reembolsa tudo
+      valorReembolso = valorTotal;
+    }
+
+    await this.updateStatus(
       pedidoId,
       'CANCELADO',
       clienteId,
       motivo || 'Cancelado pelo cliente',
     );
+
+    return this.prisma.pedido.update({
+      where: { id: pedidoId },
+      data: {
+        valorReembolso,
+        valorCreditoFuturo: valorCreditoFuturo > 0 ? valorCreditoFuturo : null,
+      },
+    });
   }
 
   async reorder(pedidoId: string, clienteId: string) {
