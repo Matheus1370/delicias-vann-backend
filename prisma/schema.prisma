@@ -459,6 +459,10 @@ model Pedido {
   valorCreditoFuturo   Decimal?      @db.Decimal(10, 2)
   valorCreditoUsado    Decimal       @default(0) @db.Decimal(10, 2)
   empresaId            String?
+  utmSource            String?
+  utmMedium            String?
+  utmCampaign          String?
+  utmContent           String?
   observacoes          String?
   canceladoMotivo      String?
   canceladoPor         String?

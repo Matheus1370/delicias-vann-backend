@@ -41,6 +41,10 @@ interface CreateOrderData {
   horaFestaPrevista?: string;
   bufferHorasAntes?: number;
   usarCredito?: boolean;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
 }
 
 const BUFFER_MIN_HORAS: Record<string, number> = {
@@ -218,6 +222,10 @@ export class OrderService {
           origem: (data.origem as any) ?? 'ONLINE',
           modalidadeEntrega: data.modalidadeEntrega as any,
           empresaId: empresaId ?? null,
+          utmSource: data.utmSource ?? null,
+          utmMedium: data.utmMedium ?? null,
+          utmCampaign: data.utmCampaign ?? null,
+          utmContent: data.utmContent ?? null,
           dataAgendamento: dataAgendamentoFinal ? new Date(dataAgendamentoFinal) : null,
           horaFestaPrevista: data.horaFestaPrevista ? new Date(data.horaFestaPrevista) : null,
           bufferHorasAntes: bufferHoras,
@@ -486,12 +494,19 @@ export class OrderService {
     });
   }
 
-  async findAllAdmin(query: { status?: string; page?: number; limit?: number }) {
+  async findAllAdmin(query: {
+    status?: string;
+    utmSource?: string;
+    page?: number;
+    limit?: number;
+  }) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const where = query.status ? { status: query.status as any } : {};
+    const where: any = {};
+    if (query.status) where.status = query.status;
+    if (query.utmSource) where.utmSource = query.utmSource;
     const [pedidos, total] = await this.prisma.$transaction([
       this.prisma.pedido.findMany({
         where,

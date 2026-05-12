@@ -62,9 +62,10 @@ export class OrderController {
 
   @Roles('OPERADOR', 'GERENTE', 'ADMINISTRADOR')
   @Get()
-  findAll(@Query() query: { status?: string; page?: string; limit?: string }) {
+  findAll(@Query() query: { status?: string; utmSource?: string; page?: string; limit?: string }) {
     return this.orderService.findAllAdmin({
       status: query.status,
+      utmSource: query.utmSource,
       page: query.page ? parseInt(query.page, 10) : undefined,
       limit: query.limit ? parseInt(query.limit, 10) : undefined,
     });
