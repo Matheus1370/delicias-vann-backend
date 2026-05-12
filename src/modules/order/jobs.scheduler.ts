@@ -13,6 +13,7 @@ export class JobsScheduler implements OnModuleInit {
     await this.registrarRepeatable('check-low-stock', {}, '0 * * * *');
     await this.registrarRepeatable('gerar-assinaturas', {}, '0 6 * * *');
     await this.registrarRepeatable('cupom-aniversario', {}, '0 7 * * *');
+    await this.registrarRepeatable('lembrete-ocasiao', {}, '0 9 * * *');
     this.logger.log('Jobs recorrentes registrados');
   }
 

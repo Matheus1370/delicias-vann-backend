@@ -150,6 +150,7 @@ model Usuario {
   assinaturas      Assinatura[]
   avaliacoes       Avaliacao[]
   creditos         CreditoCliente[]
+  ocasioes         OcasiaoCliente[]
 
   @@index([email])
   @@index([role])
@@ -512,6 +513,25 @@ model FotoEntrega {
 
   @@index([pedidoId])
   @@map("fotos_entrega")
+}
+
+model OcasiaoCliente {
+  id                 String   @id @default(uuid())
+  clienteId          String
+  titulo             String
+  diaMes             String   // "MM-DD"
+  ano                Int?     // ano do último pedido nesta ocasião
+  pedidoOriginalId   String?
+  ativa              Boolean  @default(true)
+  ultimoLembreteAno  Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  cliente            Usuario  @relation(fields: [clienteId], references: [id])
+
+  @@index([clienteId, diaMes])
+  @@index([ativa, diaMes])
+  @@map("ocasioes_cliente")
 }
 
 model CreditoCliente {
