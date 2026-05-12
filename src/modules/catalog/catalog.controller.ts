@@ -41,6 +41,14 @@ export class CatalogController {
     return this.catalogService.findAdicionais(Number.isFinite(n) ? n : undefined);
   }
 
+  @Public()
+  @Post('lead-time')
+  calcularLeadTime(
+    @Body() body: { produtoId: string; opcoesEscolhidas?: Record<string, string> },
+  ) {
+    return this.catalogService.calcularLeadTime(body.produtoId, body.opcoesEscolhidas ?? {});
+  }
+
   @Roles('GERENTE', 'ADMINISTRADOR')
   @Post('products')
   create(@Body() body: any, @Request() req: any) {

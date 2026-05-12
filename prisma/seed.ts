@@ -187,16 +187,19 @@ async function main() {
   const opcoes: Array<Prisma.OpcaoMontagemCreateInput> = [
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'tamanho', label: 'Pequeno', descricao: 'até 10 fatias', precoExtra: 0, pontosExtra: 0, ordem: 1 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'tamanho', label: 'Médio', descricao: 'até 20 fatias', precoExtra: 40, pontosExtra: 4, ordem: 2 },
-    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'tamanho', label: 'Grande', descricao: 'até 40 fatias', precoExtra: 80, pontosExtra: 8, ordem: 3 },
+    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'tamanho', label: 'Grande', descricao: 'até 40 fatias · andar duplo', precoExtra: 80, pontosExtra: 8, leadTimeHorasExtra: 24, ordem: 3 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'massa', label: 'Baunilha', descricao: 'clássico irresistível', precoExtra: 0, pontosExtra: 0, ordem: 1 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'massa', label: 'Chocolate', descricao: 'intenso & cremoso', precoExtra: 0, pontosExtra: 0, ordem: 2 },
-    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'massa', label: 'Red Velvet', descricao: 'edição especial', precoExtra: 20, pontosExtra: 1, ordem: 3 },
+    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'massa', label: 'Red Velvet', descricao: 'edição especial · descansa 24h', precoExtra: 20, pontosExtra: 1, leadTimeHorasExtra: 24, ordem: 3 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'recheio', label: 'Brigadeiro', descricao: 'o favorito', precoExtra: 0, pontosExtra: 0, ordem: 1 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'recheio', label: 'Morango c/ Chantilly', descricao: 'fresquinho!', precoExtra: 0, pontosExtra: 0, ordem: 2 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'recheio', label: 'Doce de Leite', descricao: 'puro aconchego', precoExtra: 10, pontosExtra: 0, ordem: 3 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'cobertura', label: 'Chantilly', descricao: 'suave e delicado', precoExtra: 0, pontosExtra: 0, ordem: 1 },
     { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'cobertura', label: 'Ganache', descricao: 'chocolate puro', precoExtra: 0, pontosExtra: 0, ordem: 2 },
-    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'cobertura', label: 'Pasta Americana', descricao: 'decoração impecável', precoExtra: 30, pontosExtra: 2, ordem: 3 },
+    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'cobertura', label: 'Pasta Americana', descricao: 'decoração impecável · +12h', precoExtra: 30, pontosExtra: 2, leadTimeHorasExtra: 12, ordem: 3 },
+    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'topo', label: 'Simples', descricao: 'sem topo decorativo', precoExtra: 0, pontosExtra: 0, ordem: 1 },
+    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'topo', label: 'Biscuit', descricao: 'modelagem em biscuit · seca 72h', precoExtra: 45, pontosExtra: 3, leadTimeHorasExtra: 72, ordem: 2 },
+    { produto: { connect: { id: boloPersonalizado.id } }, etapa: 'topo', label: 'Personalizado', descricao: 'decoração sob medida · +48h', precoExtra: 60, pontosExtra: 4, leadTimeHorasExtra: 48, ordem: 3 },
   ];
 
   for (const op of opcoes) {
@@ -207,7 +210,18 @@ async function main() {
         label: op.label,
       },
     });
-    if (!existente) {
+    if (existente) {
+      await prisma.opcaoMontagem.update({
+        where: { id: existente.id },
+        data: {
+          descricao: op.descricao,
+          precoExtra: op.precoExtra,
+          pontosExtra: op.pontosExtra,
+          leadTimeHorasExtra: op.leadTimeHorasExtra ?? 0,
+          ordem: op.ordem,
+        },
+      });
+    } else {
       await prisma.opcaoMontagem.create({ data: op });
     }
   }

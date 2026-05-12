@@ -12,6 +12,7 @@ describe('CatalogService', () => {
     prisma = {
       produto: {
         findMany: jest.fn(),
+        findUnique: jest.fn(),
       },
     };
 
@@ -141,6 +142,100 @@ describe('CatalogService', () => {
 
       expect(result.itens[0].unidade).toBe('PORCAO');
       expect(result.itens[0].quantidadeSugerida).toBe(20);
+    });
+  });
+
+  describe('calcularLeadTime', () => {
+    const makeProduto = (overrides: Partial<any> = {}) => ({
+      id: 'p1',
+      leadTimeHoras: 48,
+      opcoesMontagem: [],
+      ...overrides,
+    });
+
+    it('returns produto.leadTimeHoras when no opcoesEscolhidas', async () => {
+      prisma.produto.findUnique.mockResolvedValue(makeProduto({ leadTimeHoras: 36 }));
+
+      const result = await service.calcularLeadTime('p1', {});
+
+      expect(result.leadTimeHoras).toBe(36);
+      expect(result.leadTimeDias).toBe(2);
+    });
+
+    it('sums leadTimeHorasExtra of matched opcoes (by label)', async () => {
+      prisma.produto.findUnique.mockResolvedValue(
+        makeProduto({
+          leadTimeHoras: 48,
+          opcoesMontagem: [
+            { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+            { etapa: 'tamanho', label: 'Grande', leadTimeHorasExtra: 24, ativa: true },
+            { etapa: 'massa', label: 'Chocolate', leadTimeHorasExtra: 0, ativa: true },
+          ],
+        }),
+      );
+
+      const result = await service.calcularLeadTime('p1', {
+        topo: 'Biscuit',
+        tamanho: 'Grande',
+        massa: 'Chocolate',
+      });
+
+      expect(result.leadTimeHoras).toBe(48 + 72 + 24);
+      expect(result.leadTimeDias).toBe(6);
+    });
+
+    it('ignores options that are not selected', async () => {
+      prisma.produto.findUnique.mockResolvedValue(
+        makeProduto({
+          leadTimeHoras: 48,
+          opcoesMontagem: [
+            { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+            { etapa: 'topo', label: 'Simples', leadTimeHorasExtra: 0, ativa: true },
+          ],
+        }),
+      );
+
+      const result = await service.calcularLeadTime('p1', { topo: 'Simples' });
+
+      expect(result.leadTimeHoras).toBe(48);
+    });
+
+    it('matches label case-insensitively', async () => {
+      prisma.produto.findUnique.mockResolvedValue(
+        makeProduto({
+          leadTimeHoras: 48,
+          opcoesMontagem: [
+            { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+          ],
+        }),
+      );
+
+      const result = await service.calcularLeadTime('p1', { topo: 'biscuit' });
+
+      expect(result.leadTimeHoras).toBe(120);
+    });
+
+    it('returns 0 hours when produto does not exist', async () => {
+      prisma.produto.findUnique.mockResolvedValue(null);
+
+      const result = await service.calcularLeadTime('does-not-exist', {});
+
+      expect(result.leadTimeHoras).toBe(0);
+      expect(result.leadTimeDias).toBe(0);
+    });
+
+    it('rounds leadTimeDias up (ceil) when not exact multiple of 24', async () => {
+      prisma.produto.findUnique.mockResolvedValue(
+        makeProduto({
+          leadTimeHoras: 30,
+          opcoesMontagem: [],
+        }),
+      );
+
+      const result = await service.calcularLeadTime('p1', {});
+
+      expect(result.leadTimeHoras).toBe(30);
+      expect(result.leadTimeDias).toBe(2);
     });
   });
 });

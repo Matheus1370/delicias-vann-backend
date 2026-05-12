@@ -244,15 +244,16 @@ model Produto {
 }
 
 model OpcaoMontagem {
-  id          String  @id @default(uuid())
-  produtoId   String
-  etapa       String
-  label       String
-  descricao   String?
-  precoExtra  Decimal @default(0) @db.Decimal(8, 2)
-  pontosExtra Int     @default(0)
-  ordem       Int     @default(0)
-  ativa       Boolean @default(true)
+  id                  String  @id @default(uuid())
+  produtoId           String
+  etapa               String
+  label               String
+  descricao           String?
+  precoExtra          Decimal @default(0) @db.Decimal(8, 2)
+  pontosExtra         Int     @default(0)
+  leadTimeHorasExtra  Int     @default(0)
+  ordem               Int     @default(0)
+  ativa               Boolean @default(true)
 
   produto     Produto @relation(fields: [produtoId], references: [id])
 

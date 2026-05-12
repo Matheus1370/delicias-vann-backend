@@ -305,6 +305,54 @@ describe('OrderService', () => {
       ).resolves.toBeTruthy();
     });
 
+    it('rejects creation when dataAgendamento is sooner than computed lead time', async () => {
+      const produto = makeProduto({
+        leadTimeHoras: 48,
+        opcoesMontagem: [
+          { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+        ],
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+
+      // só 24h no futuro, lead time exige 48 + 72 = 120h
+      const dataAgendamento = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1, opcoesEscolhidas: { topo: 'Biscuit' } }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          dataAgendamento,
+        }),
+      ).rejects.toThrow(/prazo m[ií]nimo|antecedência/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts creation when dataAgendamento is at or after computed lead time', async () => {
+      const produto = makeProduto({
+        leadTimeHoras: 48,
+        opcoesMontagem: [
+          { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+        ],
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      // 6 dias no futuro > 5 dias (120h) necessários
+      const dataAgendamento = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1, opcoesEscolhidas: { topo: 'Biscuit' } }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          dataAgendamento,
+        }),
+      ).resolves.toBeTruthy();
+    });
+
     it('should not call reservarSlot when slotId is not provided', async () => {
       const produto = makeProduto();
       const createdPedido = makePedido();

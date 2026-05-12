@@ -100,6 +100,39 @@ export class CatalogService {
     };
   }
 
+  /**
+   * Calcula o lead time total em horas dado um produto e as opções escolhidas
+   * (mapa etapa → label). Soma o leadTimeHoras base do produto + o
+   * leadTimeHorasExtra de cada opção selecionada (matching por label,
+   * case-insensitive). Também retorna o equivalente em dias (ceil).
+   */
+  async calcularLeadTime(
+    produtoId: string,
+    opcoesEscolhidas: Record<string, string>,
+  ): Promise<{ leadTimeHoras: number; leadTimeDias: number }> {
+    const produto = await this.prisma.produto.findUnique({
+      where: { id: produtoId },
+      include: { opcoesMontagem: true },
+    });
+    if (!produto) return { leadTimeHoras: 0, leadTimeDias: 0 };
+
+    const labelsEscolhidos = new Set(
+      Object.values(opcoesEscolhidas)
+        .filter(Boolean)
+        .map((l) => l.toLowerCase()),
+    );
+
+    const extras = produto.opcoesMontagem
+      .filter((op) => labelsEscolhidos.has(op.label.toLowerCase()))
+      .reduce((acc, op) => acc + (op.leadTimeHorasExtra ?? 0), 0);
+
+    const leadTimeHoras = produto.leadTimeHoras + extras;
+    return {
+      leadTimeHoras,
+      leadTimeDias: Math.ceil(leadTimeHoras / 24),
+    };
+  }
+
   async findCategories() {
     return this.prisma.categoria.findMany({
       where: { ativa: true },

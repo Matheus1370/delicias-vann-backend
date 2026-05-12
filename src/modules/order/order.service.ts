@@ -62,6 +62,7 @@ export class OrderService {
           include: { itens: true },
           take: 1,
         },
+        opcoesMontagem: true,
       },
     });
 
@@ -117,10 +118,35 @@ export class OrderService {
       cupomId = result.cupom.id;
     }
 
-    const maxLeadHoras = Math.max(
-      ...produtos.map((p) => p.leadTimeHoras),
-      24,
-    );
+    // Calcula lead time por item somando produto.leadTimeHoras + extras das opcoes escolhidas
+    const leadTimePorItem = data.itens.map((item) => {
+      const produto = produtos.find((p) => p.id === item.produtoId)!;
+      const opcoes = (produto as any).opcoesMontagem as
+        | Array<{ label: string; leadTimeHorasExtra?: number }>
+        | undefined;
+      const labelsEscolhidos = new Set(
+        Object.values(item.opcoesEscolhidas ?? {})
+          .filter((v): v is string => typeof v === 'string')
+          .map((v) => v.toLowerCase()),
+      );
+      const extras = (opcoes ?? [])
+        .filter((op) => labelsEscolhidos.has(op.label.toLowerCase()))
+        .reduce((acc, op) => acc + (op.leadTimeHorasExtra ?? 0), 0);
+      return produto.leadTimeHoras + extras;
+    });
+    const maxLeadHoras = Math.max(...leadTimePorItem, 24);
+
+    if (data.dataAgendamento) {
+      const ts = new Date(data.dataAgendamento).getTime();
+      const minTs = Date.now() + maxLeadHoras * 60 * 60 * 1000;
+      if (ts < minTs) {
+        const dias = Math.ceil(maxLeadHoras / 24);
+        throw new UnprocessableEntityException(
+          `Prazo mínimo de ${dias} dias (${maxLeadHoras}h) de antecedência para essa configuração.`,
+        );
+      }
+    }
+
     const slaDeadline = new Date(Date.now() + maxLeadHoras * 60 * 60 * 1000);
 
     const pedido = await this.prisma.$transaction(async (tx) => {
