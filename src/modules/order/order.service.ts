@@ -402,6 +402,12 @@ export class OrderService {
         { pedidoId },
         { delay: 48 * 60 * 60 * 1000 },
       );
+      // Cross-sell (6.4): mensagem 5 dias depois com cupom direcionado
+      await this.ordersQueue.add(
+        'cross-sell',
+        { pedidoId },
+        { delay: 5 * 24 * 60 * 60 * 1000 },
+      );
     }
 
     // Programa de indicação: quando pedido entra em PAGO, processa eventual conversão

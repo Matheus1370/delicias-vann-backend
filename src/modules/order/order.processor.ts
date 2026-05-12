@@ -97,6 +97,67 @@ export class OrderProcessor {
     });
   }
 
+  @Process('cross-sell')
+  async handleCrossSell(job: Job<{ pedidoId: string }>) {
+    const pedido = await this.prisma.pedido.findUnique({
+      where: { id: job.data.pedidoId },
+      include: {
+        cliente: true,
+        itens: { include: { produto: { select: { tipo: true } } } },
+      },
+    });
+    if (!pedido || !pedido.cliente?.telefone) return;
+
+    const tipos = pedido.itens.map((it: any) => it.produto?.tipo);
+    const teveBoloEncomenda = tipos.includes('MONTAVEL');
+    const teveSoVitrine =
+      !teveBoloEncomenda &&
+      tipos.every((t: string) => t === 'PADRAO' || t === 'ADICIONAL');
+
+    if (!teveBoloEncomenda && !teveSoVitrine) return;
+
+    const templateId = teveBoloEncomenda ? 'cross_sell_docinho' : 'cross_sell_encomenda';
+    const utmCampaign = teveBoloEncomenda ? 'crosssell-docinho' : 'crosssell-encomenda';
+    const codigoCupom = `VOLTA-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const validoAte = new Date();
+    validoAte.setDate(validoAte.getDate() + 30);
+
+    try {
+      await this.prisma.cupom.create({
+        data: {
+          codigo: codigoCupom,
+          tipo: 'PERCENTUAL',
+          valor: 15,
+          minimoCompra: 30,
+          usoMaximo: 1,
+          validoAte,
+          descricao: `Cross-sell pos-pedido ${job.data.pedidoId.slice(0, 8)}`,
+          campanha: 'CROSSSELL',
+        },
+      });
+    } catch {
+      // codigo colidiu, ignora
+    }
+
+    const frontUrl =
+      this.config.get<string>('FRONTEND_URL') ??
+      this.config.get<string>('CORS_ORIGINS')?.split(',')[0] ??
+      'http://localhost:5173';
+    const destino = teveBoloEncomenda ? '/cardapio?cat=docinhos' : '/montar';
+    const link = `${frontUrl.replace(/\/$/, '')}${destino}?utm_source=whatsapp&utm_medium=crm&utm_campaign=${utmCampaign}&utm_content=${codigoCupom}`;
+
+    await this.notifications.send({
+      pedidoId: job.data.pedidoId,
+      telefone: pedido.cliente.telefone,
+      templateId,
+      payload: {
+        nome: pedido.cliente.nome,
+        codigoCupom,
+        link,
+      },
+    });
+  }
+
   @Process('watchdog-sla')
   async handleWatchdogSla() {
     const agora = new Date();

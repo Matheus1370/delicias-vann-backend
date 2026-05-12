@@ -116,6 +116,8 @@ export class NotificationService {
       foto_bolo_pronto: `Olá ${params.nome}! Seu bolo tá pronto e tá lindo 🎂 Veja a foto: ${params.fotoUrl} — sai daqui em 30min. Delicias da Vann`,
       lembrete_ocasiao: `Olá ${params.nome}! Ano que vem tem ${params.titulo} no dia ${params.diaMes}. Quer reservar o bolo com a Delicias da Vann?`,
       solicitar_avaliacao: `Olá ${params.nome}! Como foi a festa? 💖 Conta pra gente em: ${params.linkAvaliacao ?? `https://app/avaliar/${params.pedidoId}`}`,
+      cross_sell_docinho: `Oi ${params.nome}! 🎂 Já pensou um café da tarde com nossos docinhos pra alegrar o time? Cupom ${params.codigoCupom} dá 15% (válido 30 dias): ${params.link}`,
+      cross_sell_encomenda: `Oi ${params.nome}! Que tal um bolo personalizado pra próxima ocasião? Cupom ${params.codigoCupom} dá 15% (válido 30 dias): ${params.link}`,
     };
     return templates[templateId] ?? `Atualização do pedido #${params.pedidoId} - Delicias da Vann`;
   }
