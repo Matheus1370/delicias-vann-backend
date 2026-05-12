@@ -521,6 +521,19 @@ model FotoEntrega {
   @@map("fotos_entrega")
 }
 
+model EventoFunil {
+  id        String   @id @default(uuid())
+  sessaoId  String
+  usuarioId String?
+  etapa     String
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([sessaoId, createdAt])
+  @@index([etapa, createdAt])
+  @@map("eventos_funil")
+}
+
 model Empresa {
   id                String   @id @default(uuid())
   razaoSocial       String

@@ -39,4 +39,9 @@ export class ReportController {
   gastoInsumo(@Query('days') days?: string) {
     return this.reportService.gastoPorInsumo(days ? parseInt(days, 10) : 30);
   }
+
+  @Get('funil-conversao')
+  funilConversao(@Query('days') days?: string) {
+    return this.reportService.funilConversao(days ? parseInt(days, 10) : 14);
+  }
 }

@@ -241,6 +241,71 @@ export class ReportService {
     return resultado;
   }
 
+  /**
+   * Funil de conversão do configurador: agrupa eventos por etapa, ordena
+   * pela ordem canônica do funil e calcula drop-off entre etapas consecutivas.
+   */
+  async funilConversao(days = 14) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const ORDEM: string[] = [
+      'WIZARD_INICIADO',
+      'PASSO_PESSOAS',
+      'PASSO_TAMANHO',
+      'PASSO_MASSA',
+      'PASSO_RECHEIO',
+      'PASSO_COBERTURA',
+      'PASSO_TOPO',
+      'PASSO_MENSAGEM',
+      'PASSO_ADICIONAIS',
+      'PASSO_RESUMO',
+      'CHECKOUT_INICIADO',
+      'PEDIDO_FINALIZADO',
+    ];
+
+    const eventos = await this.prisma.eventoFunil.findMany({
+      where: { createdAt: { gte: since }, etapa: { in: ORDEM } },
+      select: { sessaoId: true, etapa: true },
+    });
+
+    // Contagem por etapa por sessão única (deduplica reentradas)
+    const sessoesPorEtapa = new Map<string, Set<string>>();
+    for (const ev of eventos) {
+      if (!sessoesPorEtapa.has(ev.etapa)) sessoesPorEtapa.set(ev.etapa, new Set());
+      sessoesPorEtapa.get(ev.etapa)!.add(ev.sessaoId);
+    }
+
+    const etapasComContagem = ORDEM.map((etapa) => ({
+      etapa,
+      sessoes: sessoesPorEtapa.get(etapa)?.size ?? 0,
+    }));
+
+    const total = etapasComContagem[0]?.sessoes ?? 0;
+    let anterior = total;
+    return {
+      periodoDias: days,
+      totalSessoesIniciadas: total,
+      etapas: etapasComContagem.map((e) => {
+        const dropPct =
+          anterior > 0 && e.sessoes < anterior
+            ? +((1 - e.sessoes / anterior) * 100).toFixed(1)
+            : 0;
+        const conversaoTotalPct =
+          total > 0 ? +((e.sessoes / total) * 100).toFixed(1) : 0;
+        const prev = anterior;
+        anterior = e.sessoes || anterior;
+        return {
+          etapa: e.etapa,
+          sessoes: e.sessoes,
+          conversaoTotalPct,
+          dropDaAnteriorPct: dropPct,
+          previousSessoes: prev,
+        };
+      }),
+    };
+  }
+
   async gastoPorInsumo(days = 30) {
     const since = new Date();
     since.setDate(since.getDate() - days);
