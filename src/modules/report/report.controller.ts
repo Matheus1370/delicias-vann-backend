@@ -44,4 +44,9 @@ export class ReportController {
   funilConversao(@Query('days') days?: string) {
     return this.reportService.funilConversao(days ? parseInt(days, 10) : 14);
   }
+
+  @Get('kpis')
+  kpis(@Query('days') days?: string) {
+    return this.reportService.kpisEstrategicos(days ? parseInt(days, 10) : 30);
+  }
 }

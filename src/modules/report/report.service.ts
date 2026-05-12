@@ -242,6 +242,114 @@ export class ReportService {
   }
 
   /**
+   * KPIs estratégicos da SKILL.md §K: 6 métricas que importam pra confeitaria
+   * de bairro. Janela default de 30 dias.
+   */
+  async kpisEstrategicos(days = 30) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    // 1) % pedidos de bolo (MONTAVEL) com pelo menos 1 ADICIONAL
+    const pedidosCompletos = await this.prisma.pedido.findMany({
+      where: { createdAt: { gte: since }, status: { notIn: ['CANCELADO', 'RASCUNHO_WHATSAPP'] } },
+      include: {
+        itens: { include: { produto: { select: { tipo: true } } } },
+        avaliacao: true,
+      },
+    });
+
+    let pedidosComBolo = 0;
+    let pedidosComBoloEAdicional = 0;
+    let pedidosCustomizados = 0;
+    let pedidosErroOperacional = 0;
+
+    for (const p of pedidosCompletos as any[]) {
+      const tiposItens = p.itens.map((it: any) => it.produto?.tipo);
+      const temBolo = tiposItens.includes('MONTAVEL') || tiposItens.includes('PADRAO');
+      const temAdicional = tiposItens.includes('ADICIONAL');
+      if (temBolo) {
+        pedidosComBolo += 1;
+        if (temAdicional) pedidosComBoloEAdicional += 1;
+      }
+      const customizado = p.itens.some(
+        (it: any) =>
+          (it.opcoesEscolhidas && Object.keys(it.opcoesEscolhidas).length > 0) ||
+          !!it.personalizacao,
+      );
+      if (customizado) pedidosCustomizados += 1;
+      const falha =
+        p.status === 'FALHA_ENTREGA' ||
+        !!p.falhaMotivo ||
+        (p.avaliacao && p.avaliacao.notaNPS != null && p.avaliacao.notaNPS <= 6);
+      if (falha) pedidosErroOperacional += 1;
+    }
+
+    const totalPedidos = pedidosCompletos.length;
+    const taxaAnexacaoAdicional =
+      pedidosComBolo > 0
+        ? +((pedidosComBoloEAdicional / pedidosComBolo) * 100).toFixed(1)
+        : 0;
+    const customizacaoExtrema =
+      totalPedidos > 0
+        ? +((pedidosCustomizados / totalPedidos) * 100).toFixed(1)
+        : 0;
+    const erroOperacionalPct =
+      totalPedidos > 0
+        ? +((pedidosErroOperacional / totalPedidos) * 100).toFixed(1)
+        : 0;
+
+    // 2) recompra 12 meses (clientes com >=2 pedidos em 12m)
+    const since12m = new Date();
+    since12m.setMonth(since12m.getMonth() - 12);
+    const porCliente = await this.prisma.pedido.groupBy({
+      by: ['clienteId'],
+      where: { createdAt: { gte: since12m }, status: { notIn: ['CANCELADO', 'RASCUNHO_WHATSAPP'] } },
+      _count: true,
+    });
+    const clientesDistintos = porCliente.length;
+    const recorrentes12m = porCliente.filter((p) => p._count >= 2).length;
+    const recompra12mPct =
+      clientesDistintos > 0
+        ? +((recorrentes12m / clientesDistintos) * 100).toFixed(1)
+        : 0;
+
+    // 3) NPS pós-festa (Avaliacao.notaNPS) médio
+    const npsAgg = await this.prisma.avaliacao.aggregate({
+      where: { notaNPS: { not: null }, createdAt: { gte: since } },
+      _avg: { notaNPS: true },
+      _count: true,
+    });
+    const npsMedio = +Number(npsAgg._avg.notaNPS ?? 0).toFixed(1);
+
+    // 4) Ocupação semanal atual (semana corrente)
+    const inicioSemana = new Date();
+    inicioSemana.setHours(0, 0, 0, 0);
+    inicioSemana.setDate(inicioSemana.getDate() - inicioSemana.getDay());
+    const fimSemana = new Date(inicioSemana);
+    fimSemana.setDate(fimSemana.getDate() + 7);
+    const slotsSemana = await this.prisma.slotProducao.findMany({
+      where: { data: { gte: inicioSemana, lt: fimSemana } },
+    });
+    const totalCap = slotsSemana.reduce((acc, s) => acc + s.capacidadeMaxima, 0);
+    const usadoCap = slotsSemana.reduce((acc, s) => acc + s.capacidadeOcupada, 0);
+    const ocupacaoSemanalPct =
+      totalCap > 0 ? +((usadoCap / totalCap) * 100).toFixed(1) : 0;
+
+    return {
+      periodoDias: days,
+      taxaAnexacaoAdicional,
+      recompra12mPct,
+      customizacaoExtrema,
+      erroOperacionalPct,
+      npsPosFesta: {
+        media: npsMedio,
+        amostra: npsAgg._count,
+      },
+      ocupacaoSemanalPct,
+    };
+  }
+
+  /**
    * Funil de conversão do configurador: agrupa eventos por etapa, ordena
    * pela ordem canônica do funil e calcula drop-off entre etapas consecutivas.
    */
