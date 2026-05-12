@@ -33,6 +33,26 @@ export class AvaliacaoController {
     return this.service.listarPorProduto(produtoId);
   }
 
+  @Public()
+  @Get('publica/:token')
+  obterPublica(@Param('token') token: string) {
+    return this.service.obterPublica(token);
+  }
+
+  @Public()
+  @Post('publica/:token')
+  criarPublica(
+    @Param('token') token: string,
+    @Body() body: {
+      notaNPS: number;
+      comentario?: string;
+      fotoFesta?: string;
+      permiteUsoFoto?: boolean;
+    },
+  ) {
+    return this.service.criarPublica(token, body);
+  }
+
   @Roles('GERENTE', 'ADMINISTRADOR')
   @Patch(':id/moderar')
   moderar(@Param('id') id: string, @Body() body: { publicado: boolean }) {

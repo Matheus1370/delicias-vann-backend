@@ -1,6 +1,7 @@
 import { Processor, Process } from '@nestjs/bull';
 import { Job } from 'bull';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { FiscalService } from '../fiscal/fiscal.service';
@@ -15,6 +16,7 @@ export class OrderProcessor {
     private notifications: NotificationService,
     private fiscal: FiscalService,
     private orderService: OrderService,
+    private config: ConfigService,
   ) {}
 
   @Process('payment-timeout')
@@ -77,11 +79,21 @@ export class OrderProcessor {
     });
     if (!pedido || pedido.avaliacao || !pedido.cliente?.telefone) return;
 
+    const frontUrl =
+      this.config.get<string>('FRONTEND_URL') ??
+      this.config.get<string>('CORS_ORIGINS')?.split(',')[0] ??
+      'http://localhost:5173';
+    const linkAvaliacao = `${frontUrl.replace(/\/$/, '')}/avaliar/${job.data.pedidoId}`;
+
     await this.notifications.send({
       pedidoId: job.data.pedidoId,
       telefone: pedido.cliente.telefone,
       templateId: 'solicitar_avaliacao',
-      payload: { nome: pedido.cliente.nome, pedidoId: job.data.pedidoId },
+      payload: {
+        nome: pedido.cliente.nome,
+        pedidoId: job.data.pedidoId,
+        linkAvaliacao,
+      },
     });
   }
 

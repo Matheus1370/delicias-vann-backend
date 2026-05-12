@@ -115,6 +115,7 @@ export class NotificationService {
       pedido_enviado: `Seu pedido #${params.pedidoId} está a caminho! Delicias da Vann`,
       foto_bolo_pronto: `Olá ${params.nome}! Seu bolo tá pronto e tá lindo 🎂 Veja a foto: ${params.fotoUrl} — sai daqui em 30min. Delicias da Vann`,
       lembrete_ocasiao: `Olá ${params.nome}! Ano que vem tem ${params.titulo} no dia ${params.diaMes}. Quer reservar o bolo com a Delicias da Vann?`,
+      solicitar_avaliacao: `Olá ${params.nome}! Como foi a festa? 💖 Conta pra gente em: ${params.linkAvaliacao ?? `https://app/avaliar/${params.pedidoId}`}`,
     };
     return templates[templateId] ?? `Atualização do pedido #${params.pedidoId} - Delicias da Vann`;
   }

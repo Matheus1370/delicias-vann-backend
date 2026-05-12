@@ -360,7 +360,7 @@ export class OrderService {
       await this.ordersQueue.add(
         'request-review',
         { pedidoId },
-        { delay: 2 * 60 * 60 * 1000 },
+        { delay: 48 * 60 * 60 * 1000 },
       );
     }
 

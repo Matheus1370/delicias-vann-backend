@@ -678,14 +678,17 @@ model Assinatura {
 // ─── AVALIAÇÕES ───────────────────────────────────────────────────────────────
 
 model Avaliacao {
-  id           String   @id @default(uuid())
-  pedidoId     String   @unique
-  clienteId    String
-  produtoId    String?
-  nota         Int
-  comentario   String?
-  publicado    Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id              String   @id @default(uuid())
+  pedidoId        String   @unique
+  clienteId       String
+  produtoId       String?
+  nota            Int
+  notaNPS         Int?
+  comentario      String?
+  fotoFesta       String?
+  permiteUsoFoto  Boolean  @default(false)
+  publicado       Boolean  @default(true)
+  createdAt       DateTime @default(now())
 
   pedido       Pedido   @relation(fields: [pedidoId], references: [id])
   cliente      Usuario  @relation(fields: [clienteId], references: [id])
