@@ -525,6 +525,24 @@ model FotoEntrega {
   @@map("fotos_entrega")
 }
 
+model JanelaSazonal {
+  id                   String    @id @default(uuid())
+  nome                 String
+  inicio               DateTime  @db.Date
+  fim                  DateTime  @db.Date
+  antecedenciaMinDias  Int       @default(0)
+  bloquearCustomizacao Boolean   @default(false)
+  capacidadeReduzida   Decimal?  @db.Decimal(3, 2)
+  aviso                String?
+  ativa                Boolean   @default(true)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([inicio, fim])
+  @@index([ativa])
+  @@map("janelas_sazonais")
+}
+
 model EventoFunil {
   id        String   @id @default(uuid())
   sessaoId  String

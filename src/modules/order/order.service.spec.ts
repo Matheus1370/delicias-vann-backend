@@ -17,6 +17,7 @@ import { EntregaService } from '../entrega/entrega.service';
 import { CreditoService } from '../credito/credito.service';
 import { IndicacaoService } from '../indicacao/indicacao.service';
 import { EmpresaService } from '../empresa/empresa.service';
+import { SazonalService } from '../sazonal/sazonal.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,6 +68,7 @@ describe('OrderService', () => {
   let creditoService: Record<string, any>;
   let indicacaoService: Record<string, any>;
   let empresaService: Record<string, any>;
+  let sazonalService: Record<string, any>;
   let ordersQueue: Record<string, any>;
 
   beforeEach(async () => {
@@ -138,6 +140,11 @@ describe('OrderService', () => {
       getDescontoAtivo: jest.fn().mockResolvedValue(null),
     };
 
+    sazonalService = {
+      checarPedido: jest.fn().mockResolvedValue({ ok: true }),
+      avaliarData: jest.fn().mockResolvedValue(null),
+    };
+
     ordersQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
@@ -155,6 +162,7 @@ describe('OrderService', () => {
         { provide: CreditoService, useValue: creditoService },
         { provide: IndicacaoService, useValue: indicacaoService },
         { provide: EmpresaService, useValue: empresaService },
+        { provide: SazonalService, useValue: sazonalService },
         { provide: getQueueToken('orders'), useValue: ordersQueue },
       ],
     }).compile();

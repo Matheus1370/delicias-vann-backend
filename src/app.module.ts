@@ -25,6 +25,7 @@ import { OcasiaoModule } from './modules/ocasiao/ocasiao.module';
 import { IndicacaoModule } from './modules/indicacao/indicacao.module';
 import { EmpresaModule } from './modules/empresa/empresa.module';
 import { TelemetriaModule } from './modules/telemetria/telemetria.module';
+import { SazonalModule } from './modules/sazonal/sazonal.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -76,6 +77,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     IndicacaoModule,
     EmpresaModule,
     TelemetriaModule,
+    SazonalModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

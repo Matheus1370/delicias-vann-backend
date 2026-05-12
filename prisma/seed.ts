@@ -559,6 +559,22 @@ async function main() {
     await prisma.regraCombinacao.create({ data: r });
   }
 
+  // Janela sazonal: Dia das Mães do ano que vem
+  const anoQueVem = new Date().getFullYear() + 1;
+  await prisma.janelaSazonal.upsert({
+    where: { id: 'janela-dia-das-maes' },
+    update: {},
+    create: {
+      id: 'janela-dia-das-maes',
+      nome: `Dia das Mães ${anoQueVem}`,
+      inicio: new Date(`${anoQueVem}-05-01`),
+      fim: new Date(`${anoQueVem}-05-14`),
+      antecedenciaMinDias: 7,
+      bloquearCustomizacao: false,
+      aviso: 'Pedidos pra Dia das Mães precisam de 7 dias de antecedência.',
+    },
+  });
+
   console.log('Seed concluído!');
   console.log('   admin@deliciasdavann.com.br / admin123');
   console.log('   van@deliciasdavann.com.br   / gerente123');

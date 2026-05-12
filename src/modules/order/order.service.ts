@@ -17,6 +17,7 @@ import { EntregaService } from '../entrega/entrega.service';
 import { CreditoService } from '../credito/credito.service';
 import { IndicacaoService } from '../indicacao/indicacao.service';
 import { EmpresaService } from '../empresa/empresa.service';
+import { SazonalService } from '../sazonal/sazonal.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
@@ -68,6 +69,7 @@ export class OrderService {
     private credito: CreditoService,
     private indicacao: IndicacaoService,
     private empresa: EmpresaService,
+    private sazonal: SazonalService,
     @InjectQueue('orders') private ordersQueue: Queue,
   ) {}
 
@@ -209,6 +211,22 @@ export class OrderService {
         const dias = Math.ceil(maxLeadHoras / 24);
         throw new UnprocessableEntityException(
           `Prazo mínimo de ${dias} dias (${maxLeadHoras}h) de antecedência para essa configuração.`,
+        );
+      }
+
+      // Janela sazonal (6.5)
+      const temCustomizacao = data.itens.some(
+        (i) =>
+          (i.opcoesEscolhidas && Object.keys(i.opcoesEscolhidas).length > 0) ||
+          !!i.personalizacao,
+      );
+      const sazonalCheck = await this.sazonal.checarPedido({
+        dataAlvo: new Date(dataAgendamentoFinal),
+        temCustomizacao,
+      });
+      if (!sazonalCheck.ok) {
+        throw new UnprocessableEntityException(
+          sazonalCheck.motivo ?? 'Pedido bloqueado por janela sazonal.',
         );
       }
     }
