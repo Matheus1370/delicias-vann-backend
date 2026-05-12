@@ -72,7 +72,9 @@ async function main() {
 
   const boloPersonalizado = await prisma.produto.upsert({
     where: { slug: 'bolo-personalizado' },
-    update: {},
+    update: {
+      modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+    },
     create: {
       nome: 'Bolo Personalizado',
       slug: 'bolo-personalizado',
@@ -85,6 +87,7 @@ async function main() {
       categoriaId: cats[0].id,
       imagemUrl: IMG.bolo,
       alergenicos: ['glúten', 'ovo', 'leite'],
+      modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
     },
   });
 

@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  UnprocessableEntityException,
   forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -66,6 +67,23 @@ export class OrderService {
 
     if (produtos.length !== data.itens.length) {
       throw new BadRequestException('Um ou mais produtos não estão disponíveis');
+    }
+
+    // Valida modalidade contra a interseção das modalidadesPermitidas de cada item
+    const intersecaoModalidades = produtos.reduce<string[] | null>((acc, p) => {
+      const permitidas = (p.modalidadesPermitidas ?? []) as string[];
+      if (acc === null) return [...permitidas];
+      return acc.filter((m) => permitidas.includes(m));
+    }, null);
+    if (intersecaoModalidades && !intersecaoModalidades.includes(data.modalidadeEntrega)) {
+      const incompativel = produtos.find(
+        (p) => !((p.modalidadesPermitidas ?? []) as string[]).includes(data.modalidadeEntrega),
+      );
+      throw new UnprocessableEntityException(
+        `Modalidade ${data.modalidadeEntrega} não permitida para este pedido${
+          incompativel?.nome ? ` (item incompatível: ${incompativel.nome})` : ''
+        }`,
+      );
     }
 
     const itensMapeados = data.itens.map((item) => {

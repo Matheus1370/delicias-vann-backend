@@ -224,6 +224,7 @@ model Produto {
   imagemUrl            String?
   alergenicos          String[]        @default([])
   destaqueUpsell       Boolean         @default(false)
+  modalidadesPermitidas EntregaModalidade[] @default([RETIRADA_BALCAO, MOTOBOY_LOCAL, UBER_DIRECT, NOVENTA_NOVE_ENTREGAS])
   ativo                Boolean         @default(true)
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt

@@ -25,6 +25,12 @@ const makeProduto = (overrides: Partial<any> = {}) => ({
   pontosEsforco: 5,
   leadTimeHoras: 24,
   fichasTecnicas: [],
+  modalidadesPermitidas: [
+    'RETIRADA_BALCAO',
+    'MOTOBOY_LOCAL',
+    'UBER_DIRECT',
+    'NOVENTA_NOVE_ENTREGAS',
+  ],
   ...overrides,
 });
 
@@ -131,7 +137,7 @@ describe('OrderService', () => {
   describe('create', () => {
     const baseData = {
       itens: [{ produtoId: 'prod-1', quantidade: 2 }],
-      modalidadeEntrega: 'RETIRADA',
+      modalidadeEntrega: 'RETIRADA_BALCAO',
       slotId: 'slot-1',
     };
 
@@ -230,6 +236,75 @@ describe('OrderService', () => {
       });
     });
 
+    it('rejects creation when modalidade is not in product modalidadesPermitidas', async () => {
+      const produto = makeProduto({
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'UBER_DIRECT',
+        }),
+      ).rejects.toThrow(/modalidade.*não permitida/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects creation when modalidade is allowed for some items but not all', async () => {
+      const bolo = makeProduto({
+        id: 'p-bolo',
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+      });
+      const docinho = makeProduto({
+        id: 'p-doce',
+        modalidadesPermitidas: [
+          'RETIRADA_BALCAO',
+          'MOTOBOY_LOCAL',
+          'UBER_DIRECT',
+          'NOVENTA_NOVE_ENTREGAS',
+        ],
+      });
+      prisma.produto.findMany.mockResolvedValue([bolo, docinho]);
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [
+            { produtoId: 'p-bolo', quantidade: 1 },
+            { produtoId: 'p-doce', quantidade: 5 },
+          ],
+          modalidadeEntrega: 'UBER_DIRECT',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('accepts creation when modalidade is in the intersection of all items', async () => {
+      const bolo = makeProduto({
+        id: 'p-bolo',
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+      });
+      const docinho = makeProduto({
+        id: 'p-doce',
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL', 'UBER_DIRECT'],
+      });
+      prisma.produto.findMany.mockResolvedValue([bolo, docinho]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [
+            { produtoId: 'p-bolo', quantidade: 1 },
+            { produtoId: 'p-doce', quantidade: 5 },
+          ],
+          modalidadeEntrega: 'MOTOBOY_LOCAL',
+        }),
+      ).resolves.toBeTruthy();
+    });
+
     it('should not call reservarSlot when slotId is not provided', async () => {
       const produto = makeProduto();
       const createdPedido = makePedido();
@@ -242,7 +317,7 @@ describe('OrderService', () => {
 
       await service.create('cliente-1', {
         itens: [{ produtoId: 'prod-1', quantidade: 2 }],
-        modalidadeEntrega: 'DELIVERY',
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
       });
 
       expect(capacityService.reservarSlot).not.toHaveBeenCalled();
