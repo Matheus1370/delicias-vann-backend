@@ -118,6 +118,7 @@ export class NotificationService {
       solicitar_avaliacao: `Olá ${params.nome}! Como foi a festa? 💖 Conta pra gente em: ${params.linkAvaliacao ?? `https://app/avaliar/${params.pedidoId}`}`,
       cross_sell_docinho: `Oi ${params.nome}! 🎂 Já pensou um café da tarde com nossos docinhos pra alegrar o time? Cupom ${params.codigoCupom} dá 15% (válido 30 dias): ${params.link}`,
       cross_sell_encomenda: `Oi ${params.nome}! Que tal um bolo personalizado pra próxima ocasião? Cupom ${params.codigoCupom} dá 15% (válido 30 dias): ${params.link}`,
+      avaliacao_complexidade_aprovada: `Oi ${params.cliente}! Avaliei sua referência e o pedido tá pronto pra pagamento: R$ ${params.valorTotal}. Link: ${params.linkPedido}. Delicias da Vann`,
     };
     return templates[templateId] ?? `Atualização do pedido #${params.pedidoId} - Delicias da Vann`;
   }

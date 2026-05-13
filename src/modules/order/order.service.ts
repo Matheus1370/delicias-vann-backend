@@ -28,6 +28,7 @@ interface CreateOrderData {
     quantidade: number;
     opcoesEscolhidas?: any;
     personalizacao?: string;
+    imagensReferencia?: string[];
   }>;
   modalidadeEntrega: string;
   slotId?: string;
@@ -137,8 +138,15 @@ export class OrderService {
         snapshotPontosEsforco: produto.pontosEsforco,
         opcoesEscolhidas: item.opcoesEscolhidas ?? Prisma.JsonNull,
         personalizacao: item.personalizacao ?? null,
+        imagensReferencia: item.imagensReferencia ?? [],
       };
     });
+
+    // 7.3: presença de imagensReferencia em qualquer item exige avaliação de complexidade
+    // antes de liberar pagamento. Status especial e geração de cobrança Pix adiada.
+    const exigeAvaliacaoComplexidade = data.itens.some(
+      (it) => (it.imagensReferencia?.length ?? 0) > 0,
+    );
 
     const valorSubtotal = itensMapeados.reduce(
       (acc, i) => acc + Number(i.precoUnitario) * i.quantidade,
@@ -237,6 +245,9 @@ export class OrderService {
       const criado = await tx.pedido.create({
         data: {
           clienteId,
+          status: exigeAvaliacaoComplexidade
+            ? 'AGUARDANDO_AVALIACAO_COMPLEXIDADE'
+            : 'AGUARDANDO_PAGAMENTO',
           origem: (data.origem as any) ?? 'ONLINE',
           modalidadeEntrega: data.modalidadeEntrega as any,
           empresaId: empresaId ?? null,
@@ -278,11 +289,14 @@ export class OrderService {
         });
       }
 
-      await this.ordersQueue.add(
-        'payment-timeout',
-        { pedidoId: criado.id },
-        { delay: 30 * 60 * 1000 },
-      );
+      // Timeout só faz sentido quando já há cobrança ativa
+      if (!exigeAvaliacaoComplexidade) {
+        await this.ordersQueue.add(
+          'payment-timeout',
+          { pedidoId: criado.id },
+          { delay: 30 * 60 * 1000 },
+        );
+      }
 
       if (valorCreditoUsado > 0) {
         await this.credito.consumir(clienteId, valorCreditoUsado, tx);
@@ -290,6 +304,18 @@ export class OrderService {
 
       return criado;
     });
+
+    if (exigeAvaliacaoComplexidade) {
+      // Sem cobrança Pix ainda — operadora precisa avaliar custo antes
+      await this.audit.log({
+        acao: 'ORDER.CREATED_AGUARDANDO_AVALIACAO',
+        entidade: 'Pedido',
+        entidadeId: pedido.id,
+        payloadDepois: { id: pedido.id, valorTotal: pedido.valorTotal, pontosTotal },
+        usuarioId: clienteId,
+      });
+      return pedido;
+    }
 
     try {
       const cobranca = await this.gateway.createPixCharge({
@@ -787,6 +813,146 @@ export class OrderService {
     });
 
     return foto;
+  }
+
+  /**
+   * 7.3 Upcharge de customização extrema.
+   * Operadora avalia cada item com imagensReferencia e define custoComplexidade + notas.
+   * Quando todos os itens com imagensReferencia tiverem avaliação registrada,
+   * o pedido transita de AGUARDANDO_AVALIACAO_COMPLEXIDADE para AGUARDANDO_PAGAMENTO
+   * com valorSubtotal/valorTotal recalculados e cobrança Pix recém-gerada.
+   */
+  async avaliarComplexidade(
+    pedidoId: string,
+    operadorId: string,
+    avaliacoes: Array<{
+      itemId: string;
+      custoComplexidade: number;
+      complexidadeNotas?: string;
+    }>,
+  ) {
+    if (!avaliacoes || avaliacoes.length === 0) {
+      throw new BadRequestException('Pelo menos uma avaliação é necessária');
+    }
+    for (const a of avaliacoes) {
+      if (a.custoComplexidade < 0) {
+        throw new BadRequestException('custoComplexidade não pode ser negativo');
+      }
+    }
+
+    const pedido = await this.prisma.pedido.findUnique({
+      where: { id: pedidoId },
+      include: { itens: true, cliente: { select: { id: true, nome: true, email: true, telefone: true } } },
+    });
+    if (!pedido) throw new NotFoundException('Pedido não encontrado');
+    if (pedido.status !== 'AGUARDANDO_AVALIACAO_COMPLEXIDADE') {
+      throw new BadRequestException(
+        `Pedido não está em AGUARDANDO_AVALIACAO_COMPLEXIDADE (atual: ${pedido.status})`,
+      );
+    }
+
+    const itemIds = new Set(pedido.itens.map((i) => i.id));
+    for (const a of avaliacoes) {
+      if (!itemIds.has(a.itemId)) {
+        throw new BadRequestException(`Item ${a.itemId} não pertence ao pedido`);
+      }
+    }
+
+    const agora = new Date();
+    const pedidoAtualizado = await this.prisma.$transaction(async (tx) => {
+      for (const a of avaliacoes) {
+        await tx.itemPedido.update({
+          where: { id: a.itemId },
+          data: {
+            custoComplexidade: a.custoComplexidade,
+            complexidadeNotas: a.complexidadeNotas ?? null,
+            complexidadeAvaliadaEm: agora,
+          },
+        });
+      }
+
+      const atualizados = await tx.itemPedido.findMany({ where: { pedidoId } });
+      const todosAvaliados = atualizados
+        .filter((i) => (i.imagensReferencia?.length ?? 0) > 0)
+        .every((i) => i.complexidadeAvaliadaEm != null);
+
+      if (!todosAvaliados) {
+        return tx.pedido.findUnique({
+          where: { id: pedidoId },
+          include: { itens: true, pagamento: true },
+        });
+      }
+
+      const novoSubtotal = atualizados.reduce(
+        (acc, i) =>
+          acc +
+          (Number(i.precoUnitario) + Number(i.custoComplexidade ?? 0)) * i.quantidade,
+        0,
+      );
+      const novoTotal = Math.max(
+        0,
+        novoSubtotal +
+          Number(pedido.valorFrete) -
+          Number(pedido.valorDesconto) -
+          Number(pedido.valorCreditoUsado),
+      );
+
+      return tx.pedido.update({
+        where: { id: pedidoId },
+        data: {
+          status: 'AGUARDANDO_PAGAMENTO',
+          valorSubtotal: novoSubtotal,
+          valorTotal: novoTotal,
+        },
+        include: { itens: true, pagamento: true },
+      });
+    });
+
+    if (pedidoAtualizado?.status === 'AGUARDANDO_PAGAMENTO') {
+      try {
+        const cobranca = await this.gateway.createPixCharge({
+          pedidoId,
+          valorCentavos: Math.round(Number(pedidoAtualizado.valorTotal) * 100),
+          clienteNome: pedido.cliente.nome,
+          clienteEmail: pedido.cliente.email,
+          expiresInMinutes: 60 * 24,
+        });
+        await this.prisma.pagamento.update({
+          where: { pedidoId },
+          data: {
+            gatewayTransacaoId: cobranca.transacaoId,
+            pixCopiaCola: cobranca.pixCopiaCola,
+            pixQrCodeUrl: cobranca.pixQrCodeUrl,
+            expiresAt: cobranca.expiresAt,
+            gatewayPayloadRaw: cobranca.raw,
+          },
+        });
+        if (pedido.cliente.telefone) {
+          await this.notifications.send({
+            pedidoId,
+            telefone: pedido.cliente.telefone,
+            templateId: 'avaliacao_complexidade_aprovada',
+            payload: {
+              cliente: pedido.cliente.nome,
+              valorTotal: Number(pedidoAtualizado.valorTotal).toFixed(2),
+              linkPedido: `/pedidos/${pedidoId}`,
+            },
+          });
+        }
+      } catch (err: any) {
+        // Cobrança falhou — mantém o pedido em AGUARDANDO_PAGAMENTO; cliente pode tentar recobrar
+      }
+    }
+
+    await this.audit.log({
+      acao: 'ORDER.COMPLEXIDADE_AVALIADA',
+      entidade: 'Pedido',
+      entidadeId: pedidoId,
+      payloadDepois: { avaliacoes },
+      usuarioId: operadorId,
+    });
+
+    return pedidoAtualizado;
   }
 
   async fichaProducao(pedidoId: string) {

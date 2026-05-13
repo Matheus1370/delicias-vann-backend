@@ -2,10 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AvaliacaoService } from './avaliacao.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InspiracaoService } from '../inspiracao/inspiracao.service';
 
 describe('AvaliacaoService', () => {
   let service: AvaliacaoService;
   let prisma: Record<string, any>;
+  let inspiracao: Record<string, any>;
 
   beforeEach(async () => {
     prisma = {
@@ -16,11 +18,15 @@ describe('AvaliacaoService', () => {
         create: jest.fn(),
       },
     };
+    inspiracao = {
+      curarDeAvaliacao: jest.fn(),
+    };
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
         AvaliacaoService,
         { provide: PrismaService, useValue: prisma },
+        { provide: InspiracaoService, useValue: inspiracao },
       ],
     }).compile();
 
@@ -145,6 +151,95 @@ describe('AvaliacaoService', () => {
       await service.criarPublica('pedido-1', { notaNPS: 9 });
 
       expect(prisma.avaliacao.create.mock.calls[0][0].data.permiteUsoFoto).toBe(false);
+    });
+
+    describe('curadoria automática de inspiração', () => {
+      it('cura inspiração quando NPS>=9, permiteUsoFoto=true e fotoFesta presente', async () => {
+        prisma.pedido.findUnique.mockResolvedValue(
+          makePedido({
+            ocasiao: 'aniversario',
+            itens: [
+              {
+                produtoId: 'prod-1',
+                opcoesEscolhidas: {
+                  massa: 'chocolate',
+                  recheio: 'brigadeiro',
+                  cobertura: 'ganache',
+                },
+              },
+            ],
+          }),
+        );
+        prisma.avaliacao.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+        await service.criarPublica('pedido-1', {
+          notaNPS: 10,
+          fotoFesta: 'https://cdn/festa.jpg',
+          permiteUsoFoto: true,
+        });
+
+        expect(inspiracao.curarDeAvaliacao).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pedidoId: 'pedido-1',
+            fotoUrl: 'https://cdn/festa.jpg',
+            ocasiao: 'aniversario',
+            tagsMassa: ['chocolate'],
+            tagsRecheio: ['brigadeiro'],
+            tagsCobertura: ['ganache'],
+            tagsTopo: [],
+          }),
+        );
+      });
+
+      it('não cura quando notaNPS<9', async () => {
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+        prisma.avaliacao.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+        await service.criarPublica('pedido-1', {
+          notaNPS: 8,
+          fotoFesta: 'https://cdn/festa.jpg',
+          permiteUsoFoto: true,
+        });
+
+        expect(inspiracao.curarDeAvaliacao).not.toHaveBeenCalled();
+      });
+
+      it('não cura quando permiteUsoFoto=false', async () => {
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+        prisma.avaliacao.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+        await service.criarPublica('pedido-1', {
+          notaNPS: 10,
+          fotoFesta: 'https://cdn/festa.jpg',
+          permiteUsoFoto: false,
+        });
+
+        expect(inspiracao.curarDeAvaliacao).not.toHaveBeenCalled();
+      });
+
+      it('não cura quando fotoFesta ausente', async () => {
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+        prisma.avaliacao.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+        await service.criarPublica('pedido-1', { notaNPS: 10, permiteUsoFoto: true });
+
+        expect(inspiracao.curarDeAvaliacao).not.toHaveBeenCalled();
+      });
+
+      it('avaliação é salva mesmo se curadoria lançar', async () => {
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+        prisma.avaliacao.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+        inspiracao.curarDeAvaliacao.mockRejectedValue(new Error('boom'));
+
+        const r = await service.criarPublica('pedido-1', {
+          notaNPS: 10,
+          fotoFesta: 'https://cdn/festa.jpg',
+          permiteUsoFoto: true,
+        });
+
+        expect(r).toBeDefined();
+        expect(prisma.avaliacao.create).toHaveBeenCalled();
+      });
     });
   });
 

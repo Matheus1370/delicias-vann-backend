@@ -58,6 +58,7 @@ enum SlotStatus {
 
 enum PedidoStatus {
   RASCUNHO_WHATSAPP
+  AGUARDANDO_AVALIACAO_COMPLEXIDADE
   AGUARDANDO_PAGAMENTO
   PAGO
   EM_PRODUCAO
@@ -242,6 +243,7 @@ model Produto {
   alertasEstoque       AlertaEstoque[]
   avaliacoes           Avaliacao[]
   assinaturas          Assinatura[]
+  fotos                FotoProduto[]
 
   @@index([status, ativo])
   @@index([categoriaId])
@@ -491,6 +493,8 @@ model Pedido {
   @@index([status, dataAgendamento])
   @@index([status, slaDeadline])
   @@index([canceladoMotivo])
+  @@index([utmSource])
+  @@index([utmCampaign])
   @@map("pedidos")
 }
 
@@ -504,6 +508,10 @@ model ItemPedido {
   snapshotPontosEsforco   Int
   opcoesEscolhidas        Json?
   personalizacao          String?
+  imagensReferencia       String[] @default([])
+  custoComplexidade       Decimal  @default(0) @db.Decimal(8, 2)
+  complexidadeNotas       String?
+  complexidadeAvaliadaEm  DateTime?
 
   pedido                  Pedido   @relation(fields: [pedidoId], references: [id])
   produto                 Produto  @relation(fields: [produtoId], references: [id])
@@ -779,6 +787,48 @@ model Avaliacao {
   @@index([produtoId, publicado])
   @@index([clienteId])
   @@map("avaliacoes")
+}
+
+// ─── FOTOS DE PRODUTO ─────────────────────────────────────────────────────────
+
+enum TipoFotoProduto {
+  PRINCIPAL
+  CORTADO
+  DETALHE
+}
+
+model FotoProduto {
+  id        String          @id @default(uuid())
+  produtoId String
+  url       String
+  tipo      TipoFotoProduto @default(DETALHE)
+  ordem     Int             @default(0)
+  createdAt DateTime        @default(now())
+
+  produto   Produto         @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@index([produtoId, ordem])
+  @@map("fotos_produto")
+}
+
+// ─── GALERIA DE INSPIRAÇÃO ────────────────────────────────────────────────────
+
+model BoloInspiracao {
+  id             String   @id @default(uuid())
+  titulo         String
+  fotoUrl        String
+  tagsMassa      String[] @default([])
+  tagsRecheio    String[] @default([])
+  tagsCobertura  String[] @default([])
+  tagsTopo       String[] @default([])
+  ocasiao        String?
+  publicado      Boolean  @default(true)
+  pedidoOrigemId String?  @unique
+  createdAt      DateTime @default(now())
+
+  @@index([publicado, createdAt(sort: Desc)])
+  @@index([ocasiao, publicado])
+  @@map("bolos_inspiracao")
 }
 
 // ─── WEBHOOKS E VENDAS BALCÃO ─────────────────────────────────────────────────

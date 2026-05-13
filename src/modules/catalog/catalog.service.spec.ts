@@ -14,6 +14,13 @@ describe('CatalogService', () => {
         findMany: jest.fn(),
         findUnique: jest.fn(),
       },
+      fotoProduto: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
     };
 
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
@@ -236,6 +243,80 @@ describe('CatalogService', () => {
 
       expect(result.leadTimeHoras).toBe(30);
       expect(result.leadTimeDias).toBe(2);
+    });
+  });
+
+  describe('fotos de produto', () => {
+    it('lista fotos ordenadas por ordem', async () => {
+      prisma.fotoProduto.findMany.mockResolvedValue([]);
+
+      await service.listarFotos('p1');
+
+      expect(prisma.fotoProduto.findMany).toHaveBeenCalledWith({
+        where: { produtoId: 'p1' },
+        orderBy: [{ ordem: 'asc' }, { createdAt: 'asc' }],
+      });
+    });
+
+    it('adicionarFoto exige produto existente (404 se não)', async () => {
+      prisma.produto.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.adicionarFoto('inexistente', { url: 'https://x' }),
+      ).rejects.toThrow('Produto não encontrado');
+    });
+
+    it('adicionarFoto cria com defaults (tipo DETALHE, ordem 0)', async () => {
+      prisma.produto.findUnique.mockResolvedValue({ id: 'p1' });
+      prisma.fotoProduto.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+      await service.adicionarFoto('p1', { url: 'https://cdn/x.jpg' });
+
+      expect(prisma.fotoProduto.create).toHaveBeenCalledWith({
+        data: { produtoId: 'p1', url: 'https://cdn/x.jpg', tipo: 'DETALHE', ordem: 0 },
+      });
+    });
+
+    it('adicionarFoto respeita tipo e ordem informados', async () => {
+      prisma.produto.findUnique.mockResolvedValue({ id: 'p1' });
+      prisma.fotoProduto.create.mockImplementation(({ data }: any) => Promise.resolve(data));
+
+      await service.adicionarFoto('p1', {
+        url: 'https://cdn/cortado.jpg',
+        tipo: 'CORTADO',
+        ordem: 2,
+      });
+
+      expect(prisma.fotoProduto.create.mock.calls[0][0].data).toEqual({
+        produtoId: 'p1',
+        url: 'https://cdn/cortado.jpg',
+        tipo: 'CORTADO',
+        ordem: 2,
+      });
+    });
+
+    it('atualizarFoto 404 quando id inexistente', async () => {
+      prisma.fotoProduto.findUnique.mockResolvedValue(null);
+
+      await expect(service.atualizarFoto('xx', { ordem: 5 })).rejects.toThrow(
+        'Foto não encontrada',
+      );
+    });
+
+    it('removerFoto 404 quando id inexistente', async () => {
+      prisma.fotoProduto.findUnique.mockResolvedValue(null);
+
+      await expect(service.removerFoto('xx')).rejects.toThrow('Foto não encontrada');
+      expect(prisma.fotoProduto.delete).not.toHaveBeenCalled();
+    });
+
+    it('removerFoto deleta quando id existe', async () => {
+      prisma.fotoProduto.findUnique.mockResolvedValue({ id: 'f1' });
+      prisma.fotoProduto.delete.mockResolvedValue({ id: 'f1' });
+
+      await service.removerFoto('f1');
+
+      expect(prisma.fotoProduto.delete).toHaveBeenCalledWith({ where: { id: 'f1' } });
     });
   });
 });

@@ -19,6 +19,7 @@ export class CatalogService {
       include: {
         categoria: true,
         opcoesMontagem: { where: { ativa: true }, orderBy: { ordem: 'asc' } },
+        fotos: { orderBy: { ordem: 'asc' } },
         fichasTecnicas: {
           where: { tipo: 'FINANCEIRA', ativa: true },
           select: { custoCalculado: true, margemCalculada: true },
@@ -40,10 +41,49 @@ export class CatalogService {
       include: {
         categoria: true,
         opcoesMontagem: { where: { ativa: true }, orderBy: [{ etapa: 'asc' }, { ordem: 'asc' }] },
+        fotos: { orderBy: { ordem: 'asc' } },
       },
     });
     if (!produto || !produto.ativo) throw new NotFoundException('Produto não encontrado');
     return produto;
+  }
+
+  async listarFotos(produtoId: string) {
+    return this.prisma.fotoProduto.findMany({
+      where: { produtoId },
+      orderBy: [{ ordem: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  async adicionarFoto(
+    produtoId: string,
+    data: { url: string; tipo?: 'PRINCIPAL' | 'CORTADO' | 'DETALHE'; ordem?: number },
+  ) {
+    const produto = await this.prisma.produto.findUnique({ where: { id: produtoId } });
+    if (!produto) throw new NotFoundException('Produto não encontrado');
+    return this.prisma.fotoProduto.create({
+      data: {
+        produtoId,
+        url: data.url,
+        tipo: data.tipo ?? 'DETALHE',
+        ordem: data.ordem ?? 0,
+      },
+    });
+  }
+
+  async atualizarFoto(
+    fotoId: string,
+    data: Partial<{ url: string; tipo: 'PRINCIPAL' | 'CORTADO' | 'DETALHE'; ordem: number }>,
+  ) {
+    const existente = await this.prisma.fotoProduto.findUnique({ where: { id: fotoId } });
+    if (!existente) throw new NotFoundException('Foto não encontrada');
+    return this.prisma.fotoProduto.update({ where: { id: fotoId }, data });
+  }
+
+  async removerFoto(fotoId: string) {
+    const existente = await this.prisma.fotoProduto.findUnique({ where: { id: fotoId } });
+    if (!existente) throw new NotFoundException('Foto não encontrada');
+    await this.prisma.fotoProduto.delete({ where: { id: fotoId } });
   }
 
   async findUpsellItems() {

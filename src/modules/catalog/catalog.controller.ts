@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -65,5 +65,36 @@ export class CatalogController {
   @Post('products/:id/approve-margin')
   approveMargin(@Param('id') id: string, @Body() body: { justificativa: string }, @Request() req: any) {
     return this.catalogService.approveMargin(id, body.justificativa, req.user.sub);
+  }
+
+  @Public()
+  @Get('products/:id/fotos')
+  listarFotos(@Param('id') id: string) {
+    return this.catalogService.listarFotos(id);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Post('products/:id/fotos')
+  adicionarFoto(
+    @Param('id') id: string,
+    @Body() body: { url: string; tipo?: 'PRINCIPAL' | 'CORTADO' | 'DETALHE'; ordem?: number },
+  ) {
+    return this.catalogService.adicionarFoto(id, body);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Patch('fotos/:fotoId')
+  atualizarFoto(
+    @Param('fotoId') fotoId: string,
+    @Body() body: Partial<{ url: string; tipo: 'PRINCIPAL' | 'CORTADO' | 'DETALHE'; ordem: number }>,
+  ) {
+    return this.catalogService.atualizarFoto(fotoId, body);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Delete('fotos/:fotoId')
+  async removerFoto(@Param('fotoId') fotoId: string) {
+    await this.catalogService.removerFoto(fotoId);
+    return { ok: true };
   }
 }

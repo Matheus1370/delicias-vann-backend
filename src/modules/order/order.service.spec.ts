@@ -87,6 +87,7 @@ describe('OrderService', () => {
       insumo: { findMany: jest.fn(), update: jest.fn() },
       movimentacaoEstoque: { create: jest.fn() },
       fotoEntrega: { create: jest.fn() },
+      itemPedido: { update: jest.fn(), findMany: jest.fn() },
       $transaction: jest.fn((cb: any) => {
         if (typeof cb === 'function') return cb(prisma);
         // Support array-style $transaction
@@ -1328,6 +1329,191 @@ describe('OrderService', () => {
       expect(call.include.itens.include.produto).toEqual({
         select: { id: true, nome: true, slug: true },
       });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 7.3 — Upcharge de customização extrema
+  // -------------------------------------------------------------------------
+  describe('upcharge de customização extrema', () => {
+    it('create: pedido com imagensReferencia entra em AGUARDANDO_AVALIACAO_COMPLEXIDADE e sem cobrança', async () => {
+      const produto = makeProduto();
+      const criado = makePedido({ status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE' });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(criado);
+
+      await service.create('cliente-1', {
+        itens: [
+          {
+            produtoId: 'prod-1',
+            quantidade: 1,
+            imagensReferencia: ['data:image/jpeg;base64,xxx'],
+          },
+        ],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.status).toBe('AGUARDANDO_AVALIACAO_COMPLEXIDADE');
+      expect(gatewayService.createPixCharge).not.toHaveBeenCalled();
+      expect(ordersQueue.add).not.toHaveBeenCalledWith(
+        'payment-timeout',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('create: pedido sem imagensReferencia segue fluxo normal (AGUARDANDO_PAGAMENTO + Pix)', async () => {
+      const produto = makeProduto();
+      const criado = makePedido();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(criado);
+      prisma.usuario.findUnique.mockResolvedValue({
+        id: 'cliente-1',
+        nome: 'Vann',
+        email: 'v@test.com',
+      });
+      prisma.pedido.findUnique.mockResolvedValue(criado);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.status).toBe('AGUARDANDO_PAGAMENTO');
+      expect(gatewayService.createPixCharge).toHaveBeenCalled();
+    });
+
+    it('avaliarComplexidade: rejeita custoComplexidade negativo', async () => {
+      await expect(
+        service.avaliarComplexidade('p1', 'op-1', [
+          { itemId: 'i1', custoComplexidade: -10 },
+        ]),
+      ).rejects.toThrow('custoComplexidade não pode ser negativo');
+    });
+
+    it('avaliarComplexidade: 404 quando pedido não existe', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.avaliarComplexidade('inex', 'op-1', [
+          { itemId: 'i1', custoComplexidade: 50 },
+        ]),
+      ).rejects.toThrow('Pedido não encontrado');
+    });
+
+    it('avaliarComplexidade: erro quando pedido não está em AGUARDANDO_AVALIACAO_COMPLEXIDADE', async () => {
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'PAGO',
+        itens: [],
+        cliente: { id: 'c1', nome: 'V', email: 'v@x', telefone: null },
+      });
+
+      await expect(
+        service.avaliarComplexidade('p1', 'op-1', [
+          { itemId: 'i1', custoComplexidade: 50 },
+        ]),
+      ).rejects.toThrow(/AGUARDANDO_AVALIACAO_COMPLEXIDADE/);
+    });
+
+    it('avaliarComplexidade: 400 quando itemId não pertence ao pedido', async () => {
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE',
+        itens: [{ id: 'i-own' }],
+        cliente: { id: 'c1', nome: 'V', email: 'v@x', telefone: null },
+      });
+
+      await expect(
+        service.avaliarComplexidade('p1', 'op-1', [
+          { itemId: 'i-outsider', custoComplexidade: 30 },
+        ]),
+      ).rejects.toThrow(/não pertence/);
+    });
+
+    it('avaliarComplexidade: avalia todos os itens com imagens, recalcula total e gera cobrança Pix', async () => {
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE',
+        valorFrete: new Prisma.Decimal(0),
+        valorDesconto: new Prisma.Decimal(0),
+        valorCreditoUsado: new Prisma.Decimal(0),
+        clienteId: 'c1',
+        itens: [{ id: 'i1', precoUnitario: new Prisma.Decimal(100), quantidade: 1, imagensReferencia: ['ref.jpg'] }],
+        cliente: { id: 'c1', nome: 'V', email: 'v@x.com', telefone: '+5511999' },
+      });
+      prisma.itemPedido.findMany.mockResolvedValue([
+        {
+          id: 'i1',
+          precoUnitario: new Prisma.Decimal(100),
+          quantidade: 1,
+          imagensReferencia: ['ref.jpg'],
+          custoComplexidade: new Prisma.Decimal(30),
+          complexidadeAvaliadaEm: new Date(),
+        },
+      ]);
+      prisma.pedido.update.mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: 'p1', status: data.status, valorTotal: data.valorTotal, pagamento: { id: 'pg1' } }),
+      );
+      prisma.pagamento.update.mockResolvedValue({});
+
+      await service.avaliarComplexidade('p1', 'op-1', [
+        { itemId: 'i1', custoComplexidade: 30, complexidadeNotas: 'decoração elaborada' },
+      ]);
+
+      expect(prisma.itemPedido.update).toHaveBeenCalledWith({
+        where: { id: 'i1' },
+        data: expect.objectContaining({ custoComplexidade: 30, complexidadeNotas: 'decoração elaborada' }),
+      });
+      // (100 + 30) * 1 = 130 subtotal
+      expect(prisma.pedido.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'p1' },
+          data: expect.objectContaining({
+            status: 'AGUARDANDO_PAGAMENTO',
+            valorSubtotal: 130,
+            valorTotal: 130,
+          }),
+        }),
+      );
+      expect(gatewayService.createPixCharge).toHaveBeenCalled();
+      expect(notificationService.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          templateId: 'avaliacao_complexidade_aprovada',
+        }),
+      );
+    });
+
+    it('avaliarComplexidade: NÃO transita quando algum item com imagens ainda não foi avaliado', async () => {
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce({
+          id: 'p1',
+          status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE',
+          valorFrete: new Prisma.Decimal(0),
+          valorDesconto: new Prisma.Decimal(0),
+          valorCreditoUsado: new Prisma.Decimal(0),
+          clienteId: 'c1',
+          itens: [
+            { id: 'i1', precoUnitario: new Prisma.Decimal(100), quantidade: 1, imagensReferencia: ['a.jpg'] },
+            { id: 'i2', precoUnitario: new Prisma.Decimal(50), quantidade: 1, imagensReferencia: ['b.jpg'] },
+          ],
+          cliente: { id: 'c1', nome: 'V', email: 'v@x.com', telefone: '+5511999' },
+        })
+        .mockResolvedValueOnce({ id: 'p1', status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE', itens: [], pagamento: null });
+      // só i1 ganhou complexidadeAvaliadaEm; i2 fica null
+      prisma.itemPedido.findMany.mockResolvedValue([
+        { id: 'i1', precoUnitario: new Prisma.Decimal(100), quantidade: 1, imagensReferencia: ['a.jpg'], complexidadeAvaliadaEm: new Date() },
+        { id: 'i2', precoUnitario: new Prisma.Decimal(50), quantidade: 1, imagensReferencia: ['b.jpg'], complexidadeAvaliadaEm: null },
+      ]);
+
+      await service.avaliarComplexidade('p1', 'op-1', [
+        { itemId: 'i1', custoComplexidade: 25 },
+      ]);
+
+      expect(prisma.pedido.update).not.toHaveBeenCalled();
+      expect(gatewayService.createPixCharge).not.toHaveBeenCalled();
     });
   });
 });

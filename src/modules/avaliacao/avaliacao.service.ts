@@ -1,14 +1,21 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InspiracaoService } from '../inspiracao/inspiracao.service';
 
 @Injectable()
 export class AvaliacaoService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(AvaliacaoService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private inspiracao: InspiracaoService,
+  ) {}
 
   async criar(
     clienteId: string,
@@ -138,7 +145,7 @@ export class AvaliacaoService {
     const produtoId = pedido.itens[0]?.produtoId ?? null;
     const nota = this.npsParaEstrelas(data.notaNPS);
 
-    return this.prisma.avaliacao.create({
+    const avaliacao = await this.prisma.avaliacao.create({
       data: {
         pedidoId: pedido.id,
         clienteId: pedido.clienteId,
@@ -150,5 +157,52 @@ export class AvaliacaoService {
         permiteUsoFoto: data.permiteUsoFoto ?? false,
       },
     });
+
+    if (
+      data.notaNPS >= 9 &&
+      data.permiteUsoFoto === true &&
+      data.fotoFesta
+    ) {
+      try {
+        await this.inspiracao.curarDeAvaliacao({
+          pedidoId: pedido.id,
+          fotoUrl: data.fotoFesta,
+          titulo: this.tituloDeOcasiao(pedido.ocasiao),
+          ocasiao: pedido.ocasiao,
+          ...this.extrairTagsDeItens(pedido.itens),
+        });
+      } catch (err) {
+        this.logger.warn(`Falha curando inspiração do pedido ${pedido.id}: ${err}`);
+      }
+    }
+
+    return avaliacao;
+  }
+
+  private tituloDeOcasiao(ocasiao: string | null | undefined): string {
+    if (!ocasiao) return 'Bolo de cliente real';
+    return `Bolo de ${ocasiao}`;
+  }
+
+  private extrairTagsDeItens(itens: any[]): {
+    tagsMassa: string[];
+    tagsRecheio: string[];
+    tagsCobertura: string[];
+    tagsTopo: string[];
+  } {
+    const tags = { tagsMassa: [] as string[], tagsRecheio: [] as string[], tagsCobertura: [] as string[], tagsTopo: [] as string[] };
+    for (const item of itens) {
+      const opcoes = item.opcoesEscolhidas as Record<string, any> | null;
+      if (!opcoes) continue;
+      for (const [etapa, valor] of Object.entries(opcoes)) {
+        const v = typeof valor === 'string' ? valor : (valor as any)?.label ?? null;
+        if (!v) continue;
+        if (etapa === 'massa') tags.tagsMassa.push(v);
+        else if (etapa === 'recheio') tags.tagsRecheio.push(v);
+        else if (etapa === 'cobertura') tags.tagsCobertura.push(v);
+        else if (etapa === 'topo') tags.tagsTopo.push(v);
+      }
+    }
+    return tags;
   }
 }

@@ -96,4 +96,17 @@ export class OrderController {
   ) {
     return this.orderService.adicionarFotoPronto(id, body.url, body.legenda, req.user.sub);
   }
+
+  @Roles('OPERADOR', 'GERENTE', 'ADMINISTRADOR')
+  @Patch(':id/avaliar-complexidade')
+  avaliarComplexidade(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      avaliacoes: Array<{ itemId: string; custoComplexidade: number; complexidadeNotas?: string }>;
+    },
+    @Request() req: any,
+  ) {
+    return this.orderService.avaliarComplexidade(id, req.user.sub, body.avaliacoes ?? []);
+  }
 }

@@ -575,11 +575,64 @@ async function main() {
     },
   });
 
+  // Galeria de inspiração — 30 combinações pra lançamento
+  const inspiracoes = [
+    { titulo: 'Chocolate com brigadeiro e ganache', massa: ['chocolate'], recheio: ['brigadeiro'], cobertura: ['ganache'], topo: ['raspas-chocolate'], ocasiao: 'aniversario' },
+    { titulo: 'Red velvet com cream cheese', massa: ['red-velvet'], recheio: ['cream-cheese'], cobertura: ['cream-cheese'], topo: ['frutas-vermelhas'], ocasiao: 'aniversario' },
+    { titulo: 'Naked cake com frutas vermelhas', massa: ['baunilha'], recheio: ['chantilly', 'frutas-vermelhas'], cobertura: ['chantilly-pincelado'], topo: ['frutas-vermelhas'], ocasiao: 'casamento' },
+    { titulo: 'Bolo de morango com chantilly', massa: ['branco'], recheio: ['morango', 'chantilly'], cobertura: ['chantilly'], topo: ['morangos-frescos'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de prestígio', massa: ['chocolate'], recheio: ['coco', 'brigadeiro'], cobertura: ['ganache'], topo: ['coco-ralado'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de Ninho com Nutella', massa: ['branco'], recheio: ['ninho', 'nutella'], cobertura: ['ninho'], topo: ['ferrero'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de churros', massa: ['baunilha'], recheio: ['doce-de-leite', 'canela'], cobertura: ['doce-de-leite'], topo: ['canela-em-po'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de unicórnio pastel', massa: ['baunilha'], recheio: ['brigadeiro'], cobertura: ['buttercream-pastel'], topo: ['chifre-fondant', 'estrelas'], ocasiao: 'infantil' },
+    { titulo: 'Bolo de dinossauro verde', massa: ['chocolate'], recheio: ['brigadeiro'], cobertura: ['buttercream-verde'], topo: ['dino-fondant'], ocasiao: 'infantil' },
+    { titulo: 'Bolo princesa rosa', massa: ['baunilha'], recheio: ['morango', 'chantilly'], cobertura: ['buttercream-rosa'], topo: ['coroa', 'perolas'], ocasiao: 'infantil' },
+    { titulo: 'Bolo de casamento branco minimalista', massa: ['branco'], recheio: ['doce-de-leite'], cobertura: ['pasta-americana-branca'], topo: ['flores-naturais'], ocasiao: 'casamento' },
+    { titulo: 'Bolo de casamento três andares', massa: ['branco', 'chocolate'], recheio: ['doce-de-leite', 'brigadeiro'], cobertura: ['pasta-americana-branca'], topo: ['florais'], ocasiao: 'casamento' },
+    { titulo: 'Bolo de noivado dourado', massa: ['baunilha'], recheio: ['ninho'], cobertura: ['buttercream-dourado'], topo: ['letras-fondant'], ocasiao: 'noivado' },
+    { titulo: 'Bolo de chá de bebê azul', massa: ['baunilha'], recheio: ['brigadeiro'], cobertura: ['buttercream-azul'], topo: ['ursinho-fondant'], ocasiao: 'cha-de-bebe' },
+    { titulo: 'Bolo de chá revelação rosa', massa: ['branco'], recheio: ['morango'], cobertura: ['buttercream-rosa'], topo: ['cha-revelacao'], ocasiao: 'cha-revelacao' },
+    { titulo: 'Bolo de chá revelação azul', massa: ['baunilha'], recheio: ['brigadeiro'], cobertura: ['buttercream-azul'], topo: ['cha-revelacao'], ocasiao: 'cha-revelacao' },
+    { titulo: 'Smash cake 1 ano', massa: ['cenoura'], recheio: ['brigadeiro'], cobertura: ['chantilly'], topo: ['numero-1'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de chocolate trufado', massa: ['chocolate'], recheio: ['trufa'], cobertura: ['ganache-meio-amargo'], topo: ['raspas-chocolate'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo floresta negra', massa: ['chocolate'], recheio: ['chantilly', 'cereja'], cobertura: ['chantilly'], topo: ['cerejas-frescas', 'raspas-chocolate'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de limão siciliano', massa: ['baunilha'], recheio: ['lemon-curd'], cobertura: ['buttercream-amarelo'], topo: ['raspas-limao'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de mousse de maracujá', massa: ['branco'], recheio: ['mousse-maracuja'], cobertura: ['chantilly'], topo: ['calda-maracuja', 'sementes'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de pistache', massa: ['pistache'], recheio: ['ninho', 'pistache'], cobertura: ['buttercream-pistache'], topo: ['pistaches-picados'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo geométrico moderno', massa: ['chocolate'], recheio: ['nutella'], cobertura: ['pasta-americana-cinza'], topo: ['paineis-geometricos'], ocasiao: 'aniversario' },
+    { titulo: 'Bolo de festa junina milho', massa: ['milho'], recheio: ['doce-de-leite'], cobertura: ['paçoca'], topo: ['amendoim'], ocasiao: 'festa-junina' },
+    { titulo: 'Bolo de festa junina pé-de-moleque', massa: ['baunilha'], recheio: ['amendoim'], cobertura: ['paçoca'], topo: ['paçoca-quebrada'], ocasiao: 'festa-junina' },
+    { titulo: 'Bolo de páscoa ovos de chocolate', massa: ['chocolate'], recheio: ['brigadeiro', 'ovomaltine'], cobertura: ['ganache'], topo: ['mini-ovos-chocolate'], ocasiao: 'pascoa' },
+    { titulo: 'Bolo de natal frutas cristalizadas', massa: ['frutas'], recheio: ['doce-de-leite'], cobertura: ['pasta-americana-vermelha'], topo: ['azevinho-fondant'], ocasiao: 'natal' },
+    { titulo: 'Bolo masculino futebol', massa: ['chocolate'], recheio: ['brigadeiro'], cobertura: ['buttercream-verde-campo'], topo: ['bola-fondant'], ocasiao: 'infantil' },
+    { titulo: 'Bolo de bodas de ouro', massa: ['branco'], recheio: ['doce-de-leite'], cobertura: ['pasta-americana-dourada'], topo: ['letras-50-anos'], ocasiao: 'bodas' },
+    { titulo: 'Bolo formatura preto e dourado', massa: ['chocolate'], recheio: ['ninho', 'nutella'], cobertura: ['buttercream-preto'], topo: ['capelo-fondant'], ocasiao: 'formatura' },
+  ];
+
+  for (const insp of inspiracoes) {
+    const slug = insp.titulo.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
+    const existente = await prisma.boloInspiracao.findFirst({ where: { titulo: insp.titulo } });
+    if (existente) continue;
+    await prisma.boloInspiracao.create({
+      data: {
+        titulo: insp.titulo,
+        fotoUrl: `https://placehold.co/640x480/8B4513/FFE4B5?text=${encodeURIComponent(slug)}`,
+        tagsMassa: insp.massa,
+        tagsRecheio: insp.recheio,
+        tagsCobertura: insp.cobertura,
+        tagsTopo: insp.topo,
+        ocasiao: insp.ocasiao,
+        publicado: true,
+      },
+    });
+  }
+
   console.log('Seed concluído!');
   console.log('   admin@deliciasdavann.com.br / admin123');
   console.log('   van@deliciasdavann.com.br   / gerente123');
   console.log('   cupom de teste: VANN10');
   console.log(`   ${regras.length} regras de combinação seedadas`);
+  console.log(`   ${inspiracoes.length} inspirações na galeria`);
 }
 
 main()
