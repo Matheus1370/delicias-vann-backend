@@ -1,0 +1,915 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENTE
+  CLIENTE_EMPRESA
+  OPERADOR
+  GERENTE
+  ADMINISTRADOR
+}
+
+enum ProdutoStatus {
+  ATIVO
+  REVISAO_MARGEM
+  INATIVO
+}
+
+enum ProdutoTipo {
+  PADRAO
+  MONTAVEL
+  ASSINATURA
+  ADICIONAL
+}
+
+enum FulfillmentTipo {
+  MAKE_TO_STOCK
+  MAKE_TO_ORDER
+  HIBRIDO
+}
+
+enum FichaTipo {
+  FINANCEIRA
+  OPERACIONAL
+}
+
+enum MovimentacaoTipo {
+  ENTRADA
+  SAIDA_PRODUCAO
+  AJUSTE_POSITIVO
+  AJUSTE_NEGATIVO
+  QUEBRA_DESPERDICIO
+}
+
+enum MovimentacaoVitrineTipo {
+  ENTRADA
+  AJUSTE_POSITIVO
+  AJUSTE_NEGATIVO
+  QUEBRA_DESPERDICIO
+  SAIDA_VENDA
+}
+
+enum SlotStatus {
+  ABERTO
+  CHEIO
+  BLOQUEADO
+}
+
+enum PedidoStatus {
+  RASCUNHO_WHATSAPP
+  AGUARDANDO_AVALIACAO_COMPLEXIDADE
+  AGUARDANDO_PAGAMENTO
+  PAGO
+  EM_PRODUCAO
+  PRONTO
+  EM_ENTREGA
+  ENTREGUE
+  CANCELADO
+  FALHA_ENTREGA
+  ATRASADO
+}
+
+enum CupomTipo {
+  PERCENTUAL
+  FIXO
+}
+
+enum AssinaturaStatus {
+  ATIVA
+  PAUSADA
+  CANCELADA
+}
+
+enum OrigemPedido {
+  ONLINE
+  BALCAO
+  WHATSAPP
+  ASSINATURA
+}
+
+enum EntregaModalidade {
+  RETIRADA_BALCAO
+  UBER_DIRECT
+  NOVENTA_NOVE_ENTREGAS
+  MOTOBOY_LOCAL
+}
+
+enum EntregaStatus {
+  AGUARDANDO_DESPACHO
+  DESPACHADO
+  EM_TRANSITO
+  ENTREGUE
+  FALHA
+}
+
+enum PagamentoStatus {
+  PENDENTE
+  CONFIRMADO
+  ESTORNADO
+  FALHA
+}
+
+enum PagamentoGateway {
+  ABACATE_PAY
+}
+
+enum NotificacaoCanal {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum NotificacaoStatus {
+  PENDENTE
+  ENVIADO
+  FALHOU
+}
+
+model Usuario {
+  id              String    @id @default(uuid())
+  nome            String
+  email           String    @unique
+  telefone        String?
+  cpf             String?   @db.VarChar(14)
+  dataNascimento  DateTime? @db.Date
+  senhaHash       String
+  role            Role      @default(CLIENTE)
+  ativo           Boolean   @default(true)
+  marketingOptIn  Boolean   @default(false)
+  emailVerificado Boolean   @default(false)
+  anonimizadoEm   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  enderecos           Endereco[]
+  pedidos             Pedido[]
+  refreshTokens       RefreshToken[]
+  auditLogs           AuditLog[]
+  aprovacoes          MargemAprovacao[]
+  assinaturas         Assinatura[]
+  avaliacoes          Avaliacao[]
+  creditos            CreditoCliente[]
+  ocasioes            OcasiaoCliente[]
+  indicacoesFeitas    Indicacao[]       @relation("Indicador")
+  indicacoesRecebidas Indicacao[]       @relation("Indicado")
+  empresasContato     Empresa[]         @relation("ContatoEmpresa")
+  cuponsRestritos     Cupom[]           @relation("CuponsRestritos")
+
+  @@index([email])
+  @@index([role])
+  @@index([dataNascimento])
+  @@map("usuarios")
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  usuarioId   String
+  tokenLookup String   @unique
+  tokenHash   String
+  expiresAt   DateTime
+  revogado    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@map("refresh_tokens")
+}
+
+model Endereco {
+  id          String   @id @default(uuid())
+  usuarioId   String
+  logradouro  String
+  numero      String
+  complemento String?
+  bairro      String
+  cidade      String
+  estado      String   @db.Char(2)
+  cep         String   @db.Char(9)
+  principal   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  usuario Usuario  @relation(fields: [usuarioId], references: [id])
+  pedidos Pedido[]
+
+  @@index([usuarioId])
+  @@map("enderecos")
+}
+
+model Categoria {
+  id           String   @id @default(uuid())
+  nome         String   @unique
+  slug         String   @unique
+  descricao    String?
+  margemMinima Decimal  @default(35) @db.Decimal(5, 2)
+  ordem        Int      @default(0)
+  ativa        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  produtos Produto[]
+
+  @@map("categorias")
+}
+
+model Produto {
+  id                    String              @id @default(uuid())
+  nome                  String
+  slug                  String              @unique
+  descricao             String?
+  tipo                  ProdutoTipo         @default(PADRAO)
+  fulfillment           FulfillmentTipo     @default(MAKE_TO_ORDER)
+  precoVenda            Decimal             @db.Decimal(10, 2)
+  precoPorKg            Decimal?            @db.Decimal(10, 2)
+  estoqueVitrine        Int                 @default(0)
+  pontosEsforco         Int                 @default(1)
+  status                ProdutoStatus       @default(ATIVO)
+  leadTimeHoras         Int                 @default(48)
+  categoriaId           String?
+  imagemUrl             String?
+  alergenicos           String[]            @default([])
+  destaqueUpsell        Boolean             @default(false)
+  modalidadesPermitidas EntregaModalidade[] @default([RETIRADA_BALCAO, MOTOBOY_LOCAL, UBER_DIRECT, NOVENTA_NOVE_ENTREGAS])
+  visivelPJ             Boolean             @default(false)
+  ativo                 Boolean             @default(true)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  categoria            Categoria?            @relation(fields: [categoriaId], references: [id])
+  fichasTecnicas       FichaTecnica[]
+  itensPedido          ItemPedido[]
+  opcoesMontagem       OpcaoMontagem[]
+  alertasEstoque       AlertaEstoque[]
+  avaliacoes           Avaliacao[]
+  assinaturas          Assinatura[]
+  fotos                FotoProduto[]
+  movimentacoesVitrine MovimentacaoVitrine[]
+
+  @@index([status, ativo])
+  @@index([categoriaId])
+  @@index([tipo, destaqueUpsell])
+  @@index([visivelPJ, ativo])
+  @@map("produtos")
+}
+
+model OpcaoMontagem {
+  id                 String  @id @default(uuid())
+  produtoId          String
+  etapa              String
+  label              String
+  descricao          String?
+  precoExtra         Decimal @default(0) @db.Decimal(8, 2)
+  precoExtraPorKg    Decimal @default(0) @db.Decimal(8, 2)
+  pontosExtra        Int     @default(0)
+  leadTimeHorasExtra Int     @default(0)
+  ordem              Int     @default(0)
+  ativa              Boolean @default(true)
+
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@index([produtoId, etapa])
+  @@map("opcoes_montagem")
+}
+
+model Insumo {
+  id             String   @id @default(uuid())
+  nome           String
+  unidadeMedida  String
+  precoUnitario  Decimal  @db.Decimal(10, 4)
+  estoqueAtual   Decimal  @default(0) @db.Decimal(12, 3)
+  pontoReposicao Decimal  @default(0) @db.Decimal(12, 3)
+  fornecedor     String?
+  codigoInterno  String?  @unique
+  ativo          Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  itensFilha    ItemFicha[]
+  movimentacoes MovimentacaoEstoque[]
+
+  @@index([estoqueAtual])
+  @@map("insumos")
+}
+
+model FichaTecnica {
+  id              String    @id @default(uuid())
+  produtoId       String
+  versao          Int       @default(1)
+  tipo            FichaTipo
+  ativa           Boolean   @default(false)
+  custoCalculado  Decimal   @default(0) @db.Decimal(10, 2)
+  margemCalculada Decimal   @default(0) @db.Decimal(5, 2)
+  aprovadoPorId   String?
+  aprovadoEm      DateTime?
+  observacoes     String?
+  passosPreparo   String?
+  createdAt       DateTime  @default(now())
+
+  produto    Produto           @relation(fields: [produtoId], references: [id])
+  itens      ItemFicha[]
+  aprovacoes MargemAprovacao[]
+
+  @@unique([produtoId, versao, tipo])
+  @@index([produtoId, ativa])
+  @@map("fichas_tecnicas")
+}
+
+model ItemFicha {
+  id             String  @id @default(uuid())
+  fichaTecnicaId String
+  insumoId       String
+  quantidade     Decimal @db.Decimal(12, 4)
+  unidadeMedida  String
+  custoUnitario  Decimal @db.Decimal(10, 4)
+
+  fichaTecnica FichaTecnica @relation(fields: [fichaTecnicaId], references: [id])
+  insumo       Insumo       @relation(fields: [insumoId], references: [id])
+
+  @@index([fichaTecnicaId])
+  @@map("itens_ficha")
+}
+
+model MargemAprovacao {
+  id             String   @id @default(uuid())
+  fichaTecnicaId String
+  aprovadoPorId  String
+  margemAnterior Decimal  @db.Decimal(5, 2)
+  margemNova     Decimal  @db.Decimal(5, 2)
+  justificativa  String
+  createdAt      DateTime @default(now())
+
+  fichaTecnica FichaTecnica @relation(fields: [fichaTecnicaId], references: [id])
+  aprovadoPor  Usuario      @relation(fields: [aprovadoPorId], references: [id])
+
+  @@map("margem_aprovacoes")
+}
+
+model MovimentacaoEstoque {
+  id            String           @id @default(uuid())
+  insumoId      String
+  tipo          MovimentacaoTipo
+  quantidade    Decimal          @db.Decimal(12, 3)
+  custoUnitario Decimal?         @db.Decimal(10, 4)
+  pedidoId      String?
+  loteId        String?
+  motivo        String?
+  operadorId    String?
+  createdAt     DateTime         @default(now())
+
+  insumo Insumo @relation(fields: [insumoId], references: [id])
+
+  @@index([insumoId, createdAt])
+  @@index([pedidoId])
+  @@map("movimentacoes_estoque")
+}
+
+model MovimentacaoVitrine {
+  id         String                  @id @default(uuid())
+  produtoId  String
+  tipo       MovimentacaoVitrineTipo
+  quantidade Int
+  motivo     String?
+  vendaId    String?
+  operadorId String?
+  createdAt  DateTime                @default(now())
+
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@index([produtoId, createdAt])
+  @@map("movimentacoes_vitrine")
+}
+
+model AlertaEstoque {
+  id        String   @id @default(uuid())
+  produtoId String?
+  insumoId  String?
+  tipo      String
+  mensagem  String
+  resolvido Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  produto Produto? @relation(fields: [produtoId], references: [id])
+
+  @@map("alertas_estoque")
+}
+
+model SlotProducao {
+  id                String     @id @default(uuid())
+  data              DateTime   @db.Date
+  horaInicio        DateTime   @db.Time
+  horaFim           DateTime   @db.Time
+  capacidadeMaxima  Int
+  capacidadeOcupada Int        @default(0)
+  status            SlotStatus @default(ABERTO)
+  observacao        String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  reservas ReservaProducao[]
+
+  @@unique([data, horaInicio])
+  @@index([data, status])
+  @@map("slots_producao")
+}
+
+model ReservaProducao {
+  id               String   @id @default(uuid())
+  pedidoId         String   @unique
+  slotId           String
+  pontosConsumidos Int
+  createdAt        DateTime @default(now())
+
+  pedido Pedido       @relation(fields: [pedidoId], references: [id])
+  slot   SlotProducao @relation(fields: [slotId], references: [id])
+
+  @@map("reservas_producao")
+}
+
+model LoteProducao {
+  id          String    @id @default(uuid())
+  slotId      String
+  status      String    @default("ABERTO")
+  observacao  String?
+  iniciadoEm  DateTime?
+  concluidoEm DateTime?
+  createdAt   DateTime  @default(now())
+
+  itens ItemLote[]
+
+  @@map("lotes_producao")
+}
+
+model ItemLote {
+  id       String       @id @default(uuid())
+  loteId   String
+  pedidoId String
+  lote     LoteProducao @relation(fields: [loteId], references: [id])
+
+  @@map("itens_lote")
+}
+
+model Pedido {
+  id                   String            @id @default(uuid())
+  clienteId            String
+  status               PedidoStatus      @default(AGUARDANDO_PAGAMENTO)
+  modalidadeEntrega    EntregaModalidade
+  origem               OrigemPedido      @default(ONLINE)
+  dataAgendamento      DateTime?
+  enderecoEntregaId    String?
+  cupomId              String?
+  assinaturaId         String?
+  valorSubtotal        Decimal           @db.Decimal(10, 2)
+  valorFrete           Decimal           @default(0) @db.Decimal(8, 2)
+  valorDesconto        Decimal           @default(0) @db.Decimal(8, 2)
+  valorTotal           Decimal           @db.Decimal(10, 2)
+  numeroPessoas        Int?
+  ocasiao              String?
+  horaFestaPrevista    DateTime?
+  bufferHorasAntes     Int               @default(2)
+  janelaReembolsoHoras Int               @default(48)
+  valorReembolso       Decimal?          @db.Decimal(10, 2)
+  valorCreditoFuturo   Decimal?          @db.Decimal(10, 2)
+  valorCreditoUsado    Decimal           @default(0) @db.Decimal(10, 2)
+  empresaId            String?
+  utmSource            String?
+  utmMedium            String?
+  utmCampaign          String?
+  utmContent           String?
+  observacoes          String?
+  canceladoMotivo      String?
+  canceladoPor         String?
+  slaDeadline          DateTime?
+  slaAlertado          Boolean           @default(false)
+  nfeNumero            String?
+  nfeUrl               String?
+  nfeXmlUrl            String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  cliente         Usuario          @relation(fields: [clienteId], references: [id])
+  enderecoEntrega Endereco?        @relation(fields: [enderecoEntregaId], references: [id])
+  cupom           Cupom?           @relation(fields: [cupomId], references: [id])
+  assinatura      Assinatura?      @relation(fields: [assinaturaId], references: [id])
+  itens           ItemPedido[]
+  pagamento       Pagamento?
+  entrega         Entrega?
+  reservaProducao ReservaProducao?
+  notificacoes    Notificacao[]
+  avaliacao       Avaliacao?
+  fotosEntrega    FotoEntrega[]
+  empresa         Empresa?         @relation(fields: [empresaId], references: [id])
+
+  @@index([clienteId, status, createdAt(sort: Desc)])
+  @@index([status, dataAgendamento])
+  @@index([status, slaDeadline])
+  @@index([canceladoMotivo])
+  @@index([utmSource])
+  @@index([utmCampaign])
+  @@map("pedidos")
+}
+
+model ItemPedido {
+  id                     String    @id @default(uuid())
+  pedidoId               String
+  produtoId              String
+  quantidade             Int
+  pesoKg                 Decimal?  @db.Decimal(5, 2)
+  precoUnitario          Decimal   @db.Decimal(10, 2)
+  snapshotCustoProducao  Decimal   @db.Decimal(10, 2)
+  snapshotPontosEsforco  Int
+  opcoesEscolhidas       Json?
+  personalizacao         String?
+  imagensReferencia      String[]  @default([])
+  custoComplexidade      Decimal   @default(0) @db.Decimal(8, 2)
+  complexidadeNotas      String?
+  complexidadeAvaliadaEm DateTime?
+
+  pedido  Pedido  @relation(fields: [pedidoId], references: [id])
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("itens_pedido")
+}
+
+model FotoEntrega {
+  id        String   @id @default(uuid())
+  pedidoId  String
+  url       String
+  legenda   String?
+  enviadaEm DateTime @default(now())
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("fotos_entrega")
+}
+
+model JanelaSazonal {
+  id                   String   @id @default(uuid())
+  nome                 String
+  inicio               DateTime @db.Date
+  fim                  DateTime @db.Date
+  antecedenciaMinDias  Int      @default(0)
+  bloquearCustomizacao Boolean  @default(false)
+  capacidadeReduzida   Decimal? @db.Decimal(3, 2)
+  aviso                String?
+  ativa                Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([inicio, fim])
+  @@index([ativa])
+  @@map("janelas_sazonais")
+}
+
+model EventoFunil {
+  id        String   @id @default(uuid())
+  sessaoId  String
+  usuarioId String?
+  etapa     String
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([sessaoId, createdAt])
+  @@index([etapa, createdAt])
+  @@map("eventos_funil")
+}
+
+model Empresa {
+  id                String   @id @default(uuid())
+  razaoSocial       String
+  cnpj              String   @unique @db.VarChar(18)
+  nomeFantasia      String?
+  contatoPadraoId   String
+  condicaoPagamento String?
+  descontoPadrao    Decimal  @default(0) @db.Decimal(5, 2)
+  status            String   @default("PENDENTE")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  contatoPadrao Usuario  @relation("ContatoEmpresa", fields: [contatoPadraoId], references: [id])
+  pedidos       Pedido[]
+
+  @@index([contatoPadraoId])
+  @@index([status])
+  @@map("empresas")
+}
+
+model Indicacao {
+  id                 String   @id @default(uuid())
+  indicadorId        String
+  indicadoEmail      String?
+  indicadoUsuarioId  String?
+  codigo             String   @unique
+  pedidoConvertidoId String?
+  cupomRecompensaId  String?
+  recompensaValor    Decimal? @db.Decimal(8, 2)
+  status             String   @default("PENDENTE")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  indicador       Usuario  @relation("Indicador", fields: [indicadorId], references: [id])
+  indicadoUsuario Usuario? @relation("Indicado", fields: [indicadoUsuarioId], references: [id])
+
+  @@index([indicadorId])
+  @@index([indicadoUsuarioId])
+  @@map("indicacoes")
+}
+
+model OcasiaoCliente {
+  id                String   @id @default(uuid())
+  clienteId         String
+  titulo            String
+  diaMes            String
+  ano               Int?
+  pedidoOriginalId  String?
+  ativa             Boolean  @default(true)
+  ultimoLembreteAno Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  cliente Usuario @relation(fields: [clienteId], references: [id])
+
+  @@index([clienteId, diaMes])
+  @@index([ativa, diaMes])
+  @@map("ocasioes_cliente")
+}
+
+model CreditoCliente {
+  id             String    @id @default(uuid())
+  clienteId      String
+  valor          Decimal   @db.Decimal(10, 2)
+  valorUsado     Decimal   @default(0) @db.Decimal(10, 2)
+  motivo         String
+  pedidoOrigemId String?
+  expiraEm       DateTime?
+  ativo          Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  cliente Usuario @relation(fields: [clienteId], references: [id])
+
+  @@index([clienteId, ativo])
+  @@index([expiraEm])
+  @@map("creditos_cliente")
+}
+
+model ConfiguracaoEntrega {
+  id                      String            @id @default(uuid())
+  modalidade              EntregaModalidade @unique
+  valorFreteBase          Decimal           @default(0) @db.Decimal(8, 2)
+  valorMinimoPedido       Decimal           @default(0) @db.Decimal(10, 2)
+  valorFreteGratisAcimaDe Decimal?          @db.Decimal(10, 2)
+  raioKm                  Int?
+  ativa                   Boolean           @default(true)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  @@map("configuracoes_entrega")
+}
+
+model RegraCombinacao {
+  id        String   @id @default(uuid())
+  nome      String
+  nivel     String
+  condicao  Json
+  mensagem  String
+  ativa     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ativa])
+  @@map("regras_combinacao")
+}
+
+model Pagamento {
+  id                 String           @id @default(uuid())
+  pedidoId           String           @unique
+  gateway            PagamentoGateway @default(ABACATE_PAY)
+  status             PagamentoStatus  @default(PENDENTE)
+  metodo             String?
+  valorPago          Decimal?         @db.Decimal(10, 2)
+  gatewayTransacaoId String?          @unique
+  gatewayPayloadRaw  Json?
+  pixCopiaCola       String?
+  pixQrCodeUrl       String?
+  checkoutUrl        String?
+  parcelas           Int?
+  expiresAt          DateTime?
+  confirmadoEm       DateTime?
+  estornadoEm        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id])
+
+  @@index([gatewayTransacaoId])
+  @@map("pagamentos")
+}
+
+model Entrega {
+  id                      String            @id @default(uuid())
+  pedidoId                String            @unique
+  modalidade              EntregaModalidade
+  status                  EntregaStatus     @default(AGUARDANDO_DESPACHO)
+  trackingCode            String?
+  provedorJobId           String?
+  enderecoDestinoSnapshot Json?
+  previsaoEntrega         DateTime?
+  entregueEm              DateTime?
+  falhaMotivo             String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id])
+
+  @@map("entregas")
+}
+
+model Cupom {
+  id           String    @id @default(uuid())
+  codigo       String    @unique
+  tipo         CupomTipo
+  valor        Decimal   @db.Decimal(10, 2)
+  minimoCompra Decimal   @default(0) @db.Decimal(10, 2)
+  usoMaximo    Int?
+  usoAtual     Int       @default(0)
+  validoDe     DateTime  @default(now())
+  validoAte    DateTime
+  ativo        Boolean   @default(true)
+  descricao    String?
+  campanha     String?
+  clienteId    String?
+  createdAt    DateTime  @default(now())
+
+  cliente Usuario? @relation("CuponsRestritos", fields: [clienteId], references: [id], onDelete: SetNull)
+  pedidos Pedido[]
+
+  @@index([codigo, ativo])
+  @@index([validoAte, ativo])
+  @@index([clienteId])
+  @@map("cupons")
+}
+
+model Assinatura {
+  id              String           @id @default(uuid())
+  clienteId       String
+  produtoId       String
+  status          AssinaturaStatus @default(ATIVA)
+  frequenciaDias  Int              @default(30)
+  proximaGeracao  DateTime
+  ultimaGeracaoEm DateTime?
+  diaPreferido    Int?
+  observacoes     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  cliente Usuario  @relation(fields: [clienteId], references: [id])
+  produto Produto  @relation(fields: [produtoId], references: [id])
+  pedidos Pedido[]
+
+  @@index([status, proximaGeracao])
+  @@index([clienteId])
+  @@map("assinaturas")
+}
+
+model Avaliacao {
+  id             String   @id @default(uuid())
+  pedidoId       String   @unique
+  clienteId      String
+  produtoId      String?
+  nota           Int
+  notaNPS        Int?
+  comentario     String?
+  fotoFesta      String?
+  permiteUsoFoto Boolean  @default(false)
+  publicado      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  pedido  Pedido   @relation(fields: [pedidoId], references: [id])
+  cliente Usuario  @relation(fields: [clienteId], references: [id])
+  produto Produto? @relation(fields: [produtoId], references: [id])
+
+  @@index([produtoId, publicado])
+  @@index([clienteId])
+  @@map("avaliacoes")
+}
+
+enum TipoFotoProduto {
+  PRINCIPAL
+  CORTADO
+  DETALHE
+}
+
+model FotoProduto {
+  id        String          @id @default(uuid())
+  produtoId String
+  url       String
+  tipo      TipoFotoProduto @default(DETALHE)
+  ordem     Int             @default(0)
+  createdAt DateTime        @default(now())
+
+  produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@index([produtoId, ordem])
+  @@map("fotos_produto")
+}
+
+model BoloInspiracao {
+  id             String   @id @default(uuid())
+  titulo         String
+  fotoUrl        String
+  tagsMassa      String[] @default([])
+  tagsRecheio    String[] @default([])
+  tagsCobertura  String[] @default([])
+  tagsTopo       String[] @default([])
+  ocasiao        String?
+  publicado      Boolean  @default(true)
+  pedidoOrigemId String?  @unique
+  createdAt      DateTime @default(now())
+
+  @@index([publicado, createdAt(sort: Desc)])
+  @@index([ocasiao, publicado])
+  @@map("bolos_inspiracao")
+}
+
+model BastidorPost {
+  id            String   @id @default(uuid())
+  imagemUrl     String
+  legenda       String?
+  linkInstagram String?
+  ordem         Int      @default(0)
+  ativo         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([ativo, ordem])
+  @@map("bastidor_posts")
+}
+
+model WebhookEvent {
+  id           String   @id
+  gateway      String
+  processadoEm DateTime @default(now())
+  payload      Json?
+
+  @@index([gateway, processadoEm])
+  @@map("webhook_events")
+}
+
+model VendaBalcao {
+  id          String   @id @default(uuid())
+  operadorId  String
+  valorTotal  Decimal  @db.Decimal(10, 2)
+  itens       Json
+  observacoes String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("vendas_balcao")
+}
+
+model Notificacao {
+  id           String            @id @default(uuid())
+  pedidoId     String?
+  usuarioId    String?
+  canal        NotificacaoCanal
+  status       NotificacaoStatus @default(PENDENTE)
+  templateId   String
+  payload      Json
+  tentativas   Int               @default(0)
+  erroMensagem String?
+  enviadoEm    DateTime?
+  createdAt    DateTime          @default(now())
+
+  pedido Pedido? @relation(fields: [pedidoId], references: [id])
+
+  @@index([pedidoId])
+  @@index([status, createdAt])
+  @@map("notificacoes")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  usuarioId     String?
+  acao          String
+  entidade      String
+  entidadeId    String
+  payloadAntes  Json?
+  payloadDepois Json?
+  ip            String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([entidade, entidadeId, createdAt(sort: Desc)])
+  @@index([usuarioId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

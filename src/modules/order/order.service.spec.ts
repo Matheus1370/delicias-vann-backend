@@ -1,0 +1,1761 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { getQueueToken } from '@nestjs/bull';
+import { Prisma } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { OrderService } from './order.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { CapacityService } from '../capacity/capacity.service';
+import { NotificationService } from '../notification/notification.service';
+import { AuditService } from '../audit/audit.service';
+import { CupomService } from '../cupom/cupom.service';
+import { PaymentGatewayService } from '../payment/payment-gateway.service';
+import { EntregaService } from '../entrega/entrega.service';
+import { CreditoService } from '../credito/credito.service';
+import { IndicacaoService } from '../indicacao/indicacao.service';
+import { EmpresaService } from '../empresa/empresa.service';
+import { SazonalService } from '../sazonal/sazonal.service';
+import { StorageService } from '../storage/storage.service';
+import { RegrasService } from '../regras/regras.service';
+
+const makeProduto = (overrides: Partial<any> = {}) => ({
+  id: 'prod-1',
+  status: 'ATIVO',
+  ativo: true,
+  precoVenda: new Prisma.Decimal(50),
+  pontosEsforco: 5,
+  leadTimeHoras: 24,
+  fichasTecnicas: [],
+  modalidadesPermitidas: [
+    'RETIRADA_BALCAO',
+    'MOTOBOY_LOCAL',
+    'UBER_DIRECT',
+    'NOVENTA_NOVE_ENTREGAS',
+  ],
+  ...overrides,
+});
+
+const makePedido = (overrides: Partial<any> = {}) => ({
+  id: 'pedido-1',
+  clienteId: 'cliente-1',
+  status: 'AGUARDANDO_PAGAMENTO',
+  valorSubtotal: 100,
+  valorDesconto: 0,
+  valorTotal: 100,
+  valorFrete: 0,
+  createdAt: new Date(),
+  itens: [],
+  pagamento: { id: 'pag-1', status: 'PENDENTE' },
+  ...overrides,
+});
+
+describe('OrderService', () => {
+  let service: OrderService;
+  let prisma: Record<string, any>;
+  let capacityService: Record<string, any>;
+  let notificationService: Record<string, any>;
+  let auditService: Record<string, any>;
+  let cupomService: Record<string, any>;
+  let gatewayService: Record<string, any>;
+  let entregaService: Record<string, any>;
+  let creditoService: Record<string, any>;
+  let indicacaoService: Record<string, any>;
+  let empresaService: Record<string, any>;
+  let sazonalService: Record<string, any>;
+  let storageService: Record<string, any>;
+  let regrasService: Record<string, any>;
+  let ordersQueue: Record<string, any>;
+
+  beforeEach(async () => {
+    prisma = {
+      produto: { findMany: jest.fn() },
+      pedido: {
+        create: jest.fn(),
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        update: jest.fn(),
+        count: jest.fn(),
+      },
+      pagamento: { update: jest.fn() },
+      cupom: { update: jest.fn() },
+      usuario: { findUnique: jest.fn() },
+      insumo: { findMany: jest.fn(), update: jest.fn() },
+      movimentacaoEstoque: { create: jest.fn() },
+      fotoEntrega: { create: jest.fn() },
+      itemPedido: { update: jest.fn(), findMany: jest.fn() },
+      $transaction: jest.fn((cb: any) => {
+        if (typeof cb === 'function') return cb(prisma);
+        return Promise.all(cb);
+      }),
+    };
+
+    capacityService = {
+      reservarSlot: jest.fn().mockResolvedValue({}),
+      liberarSlot: jest.fn().mockResolvedValue(undefined),
+    };
+
+    notificationService = {
+      send: jest.fn().mockResolvedValue(undefined),
+    };
+
+    auditService = {
+      log: jest.fn().mockResolvedValue(undefined),
+    };
+
+    cupomService = {
+      validate: jest.fn(),
+    };
+
+    gatewayService = {
+      createPixCharge: jest.fn().mockResolvedValue({
+        transacaoId: 'tx-1',
+        pixCopiaCola: 'pix123',
+        pixQrCodeUrl: 'https://qr.test/1',
+        expiresAt: new Date(),
+        raw: {},
+      }),
+      createCardCheckout: jest.fn(),
+    };
+
+    entregaService = {
+      getByModalidade: jest.fn().mockResolvedValue(null),
+      computeFrete: jest.fn().mockResolvedValue(0),
+    };
+
+    creditoService = {
+      saldoTotal: jest.fn().mockResolvedValue(0),
+      consumir: jest.fn().mockResolvedValue(undefined),
+      gerar: jest.fn().mockResolvedValue(undefined),
+    };
+
+    indicacaoService = {
+      processarConversao: jest.fn().mockResolvedValue(undefined),
+    };
+
+    empresaService = {
+      getDescontoAtivo: jest.fn().mockResolvedValue(null),
+    };
+
+    sazonalService = {
+      checarPedido: jest.fn().mockResolvedValue({ ok: true }),
+      avaliarData: jest.fn().mockResolvedValue(null),
+    };
+
+    storageService = {
+      assertCdnUrl: jest.fn(),
+      upload: jest.fn(),
+    };
+
+    regrasService = {
+      avaliar: jest.fn().mockResolvedValue({ violacoes: [] }),
+    };
+
+    ordersQueue = {
+      add: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OrderService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CapacityService, useValue: capacityService },
+        { provide: NotificationService, useValue: notificationService },
+        { provide: AuditService, useValue: auditService },
+        { provide: CupomService, useValue: cupomService },
+        { provide: PaymentGatewayService, useValue: gatewayService },
+        { provide: EntregaService, useValue: entregaService },
+        { provide: CreditoService, useValue: creditoService },
+        { provide: IndicacaoService, useValue: indicacaoService },
+        { provide: EmpresaService, useValue: empresaService },
+        { provide: SazonalService, useValue: sazonalService },
+        { provide: StorageService, useValue: storageService },
+        { provide: RegrasService, useValue: regrasService },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
+        { provide: getQueueToken('orders'), useValue: ordersQueue },
+      ],
+    }).compile();
+
+    service = module.get<OrderService>(OrderService);
+  });
+
+  describe('create', () => {
+    const baseData = {
+      itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+      modalidadeEntrega: 'RETIRADA_BALCAO',
+      slotId: 'slot-1',
+    };
+
+    it('should create an order with itens, slot reservation and queue job', async () => {
+      const produto = makeProduto();
+      const createdPedido = makePedido({
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+      });
+      const finalPedido = { ...createdPedido, pagamento: { pixCopiaCola: 'pix123' } };
+
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(createdPedido);
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'cliente-1', nome: 'Vann', email: 'vann@test.com' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(finalPedido);
+
+      const result = await service.create('cliente-1', baseData);
+
+      expect(prisma.produto.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['prod-1'] }, status: 'ATIVO', ativo: true },
+        }),
+      );
+
+      expect(prisma.pedido.create).toHaveBeenCalled();
+
+      expect(capacityService.reservarSlot).toHaveBeenCalledWith(
+        createdPedido.id,
+        'slot-1',
+        10,
+        prisma,
+      );
+
+      expect(ordersQueue.add).toHaveBeenCalledWith(
+        'payment-timeout',
+        { pedidoId: createdPedido.id },
+        { delay: 30 * 60 * 1000 },
+      );
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ acao: 'ORDER.CREATED' }),
+      );
+
+      expect(result).toEqual(finalPedido);
+    });
+
+    it('should throw BadRequestException when a product is not available', async () => {
+      prisma.produto.findMany.mockResolvedValue([]);
+
+      await expect(service.create('cliente-1', baseData)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.create('cliente-1', baseData)).rejects.toThrow(
+        'Um ou mais produtos não estão disponíveis',
+      );
+    });
+
+    it('should apply coupon discount correctly', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      const createdPedido = makePedido({ valorTotal: 80 });
+
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(createdPedido);
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'Vann', email: 'v@t.com' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(createdPedido);
+
+      cupomService.validate.mockResolvedValue({
+        desconto: 20,
+        cupom: { id: 'cupom-1' },
+      });
+
+      await service.create('cliente-1', {
+        ...baseData,
+        cupomCodigo: 'VANN20',
+      });
+
+      expect(cupomService.validate).toHaveBeenCalledWith('VANN20', 200, 'cliente-1');
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.valorDesconto).toBe(20);
+      expect(createCall.data.cupomId).toBe('cupom-1');
+      expect(createCall.data.valorTotal).toBe(180);
+
+      expect(prisma.cupom.update).toHaveBeenCalledWith({
+        where: { id: 'cupom-1' },
+        data: { usoAtual: { increment: 1 } },
+      });
+    });
+
+    describe('precificação por kg', () => {
+      const setupOk = (produto: any) => {
+        prisma.produto.findMany.mockResolvedValue([produto]);
+        prisma.pedido.create.mockResolvedValue(makePedido());
+        prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+        prisma.pagamento.update.mockResolvedValue({});
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      };
+
+      it('cobra pesoKg × precoPorKg para produto vendido por quilo', async () => {
+        const produto = makeProduto({ precoPorKg: new Prisma.Decimal(80) });
+        setupOk(produto);
+
+        await service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1, pesoKg: 2 }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+        });
+
+        const createCall = prisma.pedido.create.mock.calls[0][0];
+        expect(createCall.data.itens.create[0].precoUnitario).toBe(160);
+        expect(createCall.data.itens.create[0].pesoKg).toBe(2);
+        expect(Number(createCall.data.valorSubtotal)).toBe(160);
+      });
+
+      it('soma precoExtraPorKg das opções escolhidas ao preço do quilo', async () => {
+        const produto = makeProduto({
+          precoPorKg: new Prisma.Decimal(80),
+          opcoesMontagem: [
+            { label: 'Red Velvet', precoExtra: 0, precoExtraPorKg: 15, pontosExtra: 1 },
+            { label: 'Brigadeiro', precoExtra: 0, precoExtraPorKg: 0, pontosExtra: 0 },
+          ],
+        });
+        setupOk(produto);
+
+        await service.create('cliente-1', {
+          itens: [
+            {
+              produtoId: 'prod-1',
+              quantidade: 1,
+              pesoKg: 3,
+              opcoesEscolhidas: { massa: 'Red Velvet', recheio: 'Brigadeiro' },
+            },
+          ],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+        });
+
+        const createCall = prisma.pedido.create.mock.calls[0][0];
+        expect(createCall.data.itens.create[0].precoUnitario).toBe(285);
+      });
+
+      it('rejeita pedido por kg com peso abaixo de 1kg', async () => {
+        const produto = makeProduto({ precoPorKg: new Prisma.Decimal(80) });
+        prisma.produto.findMany.mockResolvedValue([produto]);
+
+        await expect(
+          service.create('cliente-1', {
+            itens: [{ produtoId: 'prod-1', quantidade: 1, pesoKg: 0.5 }],
+            modalidadeEntrega: 'RETIRADA_BALCAO',
+          }),
+        ).rejects.toThrow(/peso mínimo de 1kg/i);
+        expect(prisma.pedido.create).not.toHaveBeenCalled();
+      });
+
+      it('rejeita pedido por kg sem peso informado', async () => {
+        const produto = makeProduto({ precoPorKg: new Prisma.Decimal(80) });
+        prisma.produto.findMany.mockResolvedValue([produto]);
+
+        await expect(
+          service.create('cliente-1', {
+            itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+            modalidadeEntrega: 'RETIRADA_BALCAO',
+          }),
+        ).rejects.toThrow(/peso mínimo de 1kg/i);
+      });
+    });
+
+    it('rejects creation when modalidade is not in product modalidadesPermitidas', async () => {
+      const produto = makeProduto({
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'UBER_DIRECT',
+        }),
+      ).rejects.toThrow(/modalidade.*não permitida/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects creation when modalidade is allowed for some items but not all', async () => {
+      const bolo = makeProduto({
+        id: 'p-bolo',
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+      });
+      const docinho = makeProduto({
+        id: 'p-doce',
+        modalidadesPermitidas: [
+          'RETIRADA_BALCAO',
+          'MOTOBOY_LOCAL',
+          'UBER_DIRECT',
+          'NOVENTA_NOVE_ENTREGAS',
+        ],
+      });
+      prisma.produto.findMany.mockResolvedValue([bolo, docinho]);
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [
+            { produtoId: 'p-bolo', quantidade: 1 },
+            { produtoId: 'p-doce', quantidade: 5 },
+          ],
+          modalidadeEntrega: 'UBER_DIRECT',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('accepts creation when modalidade is in the intersection of all items', async () => {
+      const bolo = makeProduto({
+        id: 'p-bolo',
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL'],
+      });
+      const docinho = makeProduto({
+        id: 'p-doce',
+        modalidadesPermitidas: ['RETIRADA_BALCAO', 'MOTOBOY_LOCAL', 'UBER_DIRECT'],
+      });
+      prisma.produto.findMany.mockResolvedValue([bolo, docinho]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [
+            { produtoId: 'p-bolo', quantidade: 1 },
+            { produtoId: 'p-doce', quantidade: 5 },
+          ],
+          modalidadeEntrega: 'MOTOBOY_LOCAL',
+        }),
+      ).resolves.toBeTruthy();
+    });
+
+    describe('regras de combinação no checkout', () => {
+      it('bloqueia pedido quando regra BLOQUEAR dispara', async () => {
+        const produto = makeProduto();
+        prisma.produto.findMany.mockResolvedValue([produto]);
+        regrasService.avaliar.mockResolvedValue({
+          violacoes: [
+            {
+              regraId: 'r-1',
+              nome: 'Chantilly em moto',
+              nivel: 'BLOQUEAR',
+              mensagem: 'Chantilly não vai em moto neste calor.',
+            },
+          ],
+        });
+
+        await expect(
+          service.create('cliente-1', {
+            itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+            modalidadeEntrega: 'MOTOBOY_LOCAL',
+          }),
+        ).rejects.toThrow(/Combinação inviável.*Chantilly não vai em moto/);
+
+        expect(prisma.pedido.create).not.toHaveBeenCalled();
+      });
+
+      it('aceita pedido quando todas as regras são AVISAR', async () => {
+        const produto = makeProduto();
+        prisma.produto.findMany.mockResolvedValue([produto]);
+        prisma.pedido.create.mockResolvedValue(makePedido());
+        prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+        prisma.pagamento.update.mockResolvedValue({});
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+        regrasService.avaliar.mockResolvedValue({
+          violacoes: [
+            {
+              regraId: 'r-1',
+              nome: 'Aviso',
+              nivel: 'AVISAR',
+              mensagem: 'Cuidado com o calor.',
+            },
+          ],
+        });
+
+        await expect(
+          service.create('cliente-1', {
+            itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+            modalidadeEntrega: 'RETIRADA_BALCAO',
+          }),
+        ).resolves.toBeTruthy();
+      });
+
+      it('passa modalidade + dataAgendamento + numeroPessoas para o avaliador', async () => {
+        const produto = makeProduto();
+        prisma.produto.findMany.mockResolvedValue([produto]);
+        prisma.pedido.create.mockResolvedValue(makePedido());
+        prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+        prisma.pagamento.update.mockResolvedValue({});
+        prisma.pedido.findUnique.mockResolvedValue(makePedido());
+        const dataAgendamento = new Date(
+          Date.now() + 72 * 3600 * 1000,
+        ).toISOString();
+
+        await service.create('cliente-1', {
+          itens: [
+            {
+              produtoId: 'prod-1',
+              quantidade: 1,
+              opcoesEscolhidas: { recheio: 'chantilly' },
+            },
+          ],
+          modalidadeEntrega: 'UBER_DIRECT',
+          dataAgendamento,
+          numeroPessoas: 20,
+        });
+
+        expect(regrasService.avaliar).toHaveBeenCalledWith({
+          produtoId: 'prod-1',
+          opcoesEscolhidas: { recheio: 'chantilly' },
+          modalidade: 'UBER_DIRECT',
+          dataAgendamento,
+          numeroPessoas: 20,
+        });
+      });
+
+      it('agrega violações BLOQUEAR de múltiplos itens', async () => {
+        const bolo = makeProduto({ id: 'p-bolo' });
+        const doce = makeProduto({ id: 'p-doce' });
+        prisma.produto.findMany.mockResolvedValue([bolo, doce]);
+        regrasService.avaliar
+          .mockResolvedValueOnce({
+            violacoes: [
+              { regraId: 'r1', nome: 'A', nivel: 'BLOQUEAR', mensagem: 'erro 1' },
+            ],
+          })
+          .mockResolvedValueOnce({
+            violacoes: [
+              { regraId: 'r2', nome: 'B', nivel: 'BLOQUEAR', mensagem: 'erro 2' },
+            ],
+          });
+
+        await expect(
+          service.create('cliente-1', {
+            itens: [
+              { produtoId: 'p-bolo', quantidade: 1 },
+              { produtoId: 'p-doce', quantidade: 5 },
+            ],
+            modalidadeEntrega: 'RETIRADA_BALCAO',
+          }),
+        ).rejects.toThrow(/erro 1; erro 2/);
+      });
+    });
+
+    it('rejects creation when dataAgendamento is sooner than computed lead time', async () => {
+      const produto = makeProduto({
+        leadTimeHoras: 48,
+        opcoesMontagem: [
+          { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+        ],
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+
+      const dataAgendamento = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1, opcoesEscolhidas: { topo: 'Biscuit' } }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          dataAgendamento,
+        }),
+      ).rejects.toThrow(/prazo m[ií]nimo|antecedência/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts creation when dataAgendamento is at or after computed lead time', async () => {
+      const produto = makeProduto({
+        leadTimeHoras: 48,
+        opcoesMontagem: [
+          { etapa: 'topo', label: 'Biscuit', leadTimeHorasExtra: 72, ativa: true },
+        ],
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const dataAgendamento = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1, opcoesEscolhidas: { topo: 'Biscuit' } }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          dataAgendamento,
+        }),
+      ).resolves.toBeTruthy();
+    });
+
+    it('derives dataAgendamento from horaFestaPrevista - bufferHorasAntes when provided', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000);
+      festa.setHours(16, 0, 0, 0);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+        horaFestaPrevista: festa.toISOString(),
+        bufferHorasAntes: 2,
+      } as any);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      const despachoEsperado = new Date(festa.getTime() - 2 * 60 * 60 * 1000);
+      expect(new Date(createCall.data.dataAgendamento).getTime()).toBe(despachoEsperado.getTime());
+      expect(new Date(createCall.data.horaFestaPrevista).getTime()).toBe(festa.getTime());
+      expect(createCall.data.bufferHorasAntes).toBe(2);
+    });
+
+    it('rejects MOTOBOY_LOCAL with buffer < 2h', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'MOTOBOY_LOCAL',
+          horaFestaPrevista: festa,
+          bufferHorasAntes: 1,
+        } as any),
+      ).rejects.toThrow(/buffer/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts UBER_DIRECT with buffer = 1h (minimum allowed)', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'UBER_DIRECT',
+          horaFestaPrevista: festa,
+          bufferHorasAntes: 1,
+        } as any),
+      ).resolves.toBeTruthy();
+    });
+
+    it('accepts RETIRADA_BALCAO with buffer = 0', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const festa = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          horaFestaPrevista: festa,
+          bufferHorasAntes: 0,
+        } as any),
+      ).resolves.toBeTruthy();
+    });
+
+    it('falls back to provided dataAgendamento when horaFestaPrevista is absent', async () => {
+      const produto = makeProduto({ leadTimeHoras: 24 });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+
+      const data = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        dataAgendamento: data,
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(new Date(createCall.data.dataAgendamento).getTime()).toBe(new Date(data).getTime());
+      expect(createCall.data.horaFestaPrevista).toBeNull();
+    });
+
+    it('rejects creation when subtotal is below the modalidade minimum', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(30) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      entregaService.getByModalidade.mockResolvedValue({
+        modalidade: 'UBER_DIRECT',
+        valorMinimoPedido: new Prisma.Decimal(80),
+        valorFreteBase: new Prisma.Decimal(22),
+        valorFreteGratisAcimaDe: null,
+      });
+
+      await expect(
+        service.create('cliente-1', {
+          itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+          modalidadeEntrega: 'UBER_DIRECT',
+        }),
+      ).rejects.toThrow(/m[ií]nimo/i);
+
+      expect(prisma.pedido.create).not.toHaveBeenCalled();
+    });
+
+    it('persists valorFrete from EntregaService.computeFrete', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      entregaService.getByModalidade.mockResolvedValue({
+        modalidade: 'MOTOBOY_LOCAL',
+        valorMinimoPedido: new Prisma.Decimal(0),
+        valorFreteBase: new Prisma.Decimal(15),
+        valorFreteGratisAcimaDe: new Prisma.Decimal(200),
+      });
+      entregaService.computeFrete.mockResolvedValue(15);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+      });
+
+      expect(entregaService.computeFrete).toHaveBeenCalledWith('MOTOBOY_LOCAL', 100);
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorFrete)).toBe(15);
+      expect(Number(createCall.data.valorTotal)).toBe(115);
+    });
+
+    it('zeroes valorFrete when computeFrete returns 0 (free shipping reached)', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      entregaService.getByModalidade.mockResolvedValue({
+        modalidade: 'MOTOBOY_LOCAL',
+        valorMinimoPedido: new Prisma.Decimal(0),
+        valorFreteBase: new Prisma.Decimal(15),
+        valorFreteGratisAcimaDe: new Prisma.Decimal(200),
+      });
+      entregaService.computeFrete.mockResolvedValue(0);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 3 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorFrete)).toBe(0);
+      expect(Number(createCall.data.valorTotal)).toBe(300);
+    });
+
+    it('applies credito do cliente when usarCredito is true', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      creditoService.saldoTotal.mockResolvedValue(80);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        usarCredito: true,
+      } as any);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorCreditoUsado)).toBe(80);
+      expect(Number(createCall.data.valorTotal)).toBe(120);
+      expect(creditoService.consumir).toHaveBeenCalledWith('cliente-1', 80, expect.anything());
+    });
+
+    it('caps credito usage to keep valorTotal non-negative', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(40) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      creditoService.saldoTotal.mockResolvedValue(500);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        usarCredito: true,
+      } as any);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorCreditoUsado)).toBe(40);
+      expect(Number(createCall.data.valorTotal)).toBe(0);
+      expect(creditoService.consumir).toHaveBeenCalledWith('cliente-1', 40, expect.anything());
+    });
+
+    it('does not consume credito when usarCredito is false', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      creditoService.saldoTotal.mockResolvedValue(80);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      expect(creditoService.consumir).not.toHaveBeenCalled();
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorCreditoUsado)).toBe(0);
+    });
+
+    it('applies desconto da empresa e persiste empresaId quando cliente eh PJ aprovado', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(100) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      empresaService.getDescontoAtivo.mockResolvedValue({ empresaId: 'emp-1', descontoPct: 10 });
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorDesconto)).toBe(20);
+      expect(Number(createCall.data.valorTotal)).toBe(180);
+      expect(createCall.data.empresaId).toBe('emp-1');
+    });
+
+    it('soma desconto da empresa ao desconto do cupom', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(200) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'V', email: 'v@t' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(makePedido());
+      cupomService.validate.mockResolvedValue({
+        desconto: 30,
+        cupom: { id: 'cup-x' },
+      });
+      empresaService.getDescontoAtivo.mockResolvedValue({ empresaId: 'emp-1', descontoPct: 5 });
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        cupomCodigo: 'ABC',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(Number(createCall.data.valorDesconto)).toBe(40);
+      expect(Number(createCall.data.valorTotal)).toBe(160);
+    });
+
+    it('should not call reservarSlot when slotId is not provided', async () => {
+      const produto = makeProduto();
+      const createdPedido = makePedido();
+
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(createdPedido);
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'c1', nome: 'Vann', email: 'v@t.com' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(createdPedido);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+        modalidadeEntrega: 'MOTOBOY_LOCAL',
+      });
+
+      expect(capacityService.reservarSlot).not.toHaveBeenCalled();
+    });
+
+    it('cartão desabilitado: força PIX mesmo quando o payload pede CARTAO', async () => {
+      const produto = makeProduto();
+      const createdPedido = makePedido({ valorTotal: 50 });
+      const finalPedido = { ...createdPedido };
+
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(createdPedido);
+      prisma.usuario.findUnique.mockResolvedValue({ id: 'cliente-1', nome: 'Maria', email: 'maria@ex.com' });
+      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pedido.findUnique.mockResolvedValue(finalPedido);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+        metodoPagamento: 'CARTAO',
+        parcelas: 3,
+      } as any);
+
+      expect(gatewayService.createCardCheckout).not.toHaveBeenCalled();
+      expect(gatewayService.createPixCharge).toHaveBeenCalled();
+      const updateData = prisma.pagamento.update.mock.calls.at(-1)[0].data;
+      expect(updateData.metodo).toBe('PIX');
+    });
+  });
+
+  describe('create — validação de URLs de imagensReferencia', () => {
+    it('rejeita 422 quando item tem imagensReferencia com URL fora do CDN', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      storageService.assertCdnUrl.mockImplementationOnce(() => {
+        throw new (require('@nestjs/common').UnprocessableEntityException)('url fora');
+      });
+
+      await expect(
+        service.create('clienteId', {
+          itens: [
+            {
+              produtoId: 'prod-1',
+              quantidade: 1,
+              opcoesEscolhidas: {},
+              imagensReferencia: ['https://evil.example/foto.jpg'],
+            },
+          ],
+          modalidadeEntrega: 'RETIRADA_BALCAO',
+          horaFestaPrevista: new Date(Date.now() + 5 * 24 * 3600 * 1000),
+        } as any),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('chama storage.assertCdnUrl pra cada URL antes de criar no banco', async () => {
+      const produto = makeProduto();
+      const criado = makePedido({ status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE' });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(criado);
+
+      await service.create('cliente-1', {
+        itens: [
+          {
+            produtoId: 'prod-1',
+            quantidade: 1,
+            imagensReferencia: [
+              'http://localhost/cdn/referencia/a.jpg',
+              'http://localhost/cdn/referencia/b.jpg',
+            ],
+          },
+        ],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      expect(storageService.assertCdnUrl).toHaveBeenCalledWith('http://localhost/cdn/referencia/a.jpg');
+      expect(storageService.assertCdnUrl).toHaveBeenCalledWith('http://localhost/cdn/referencia/b.jpg');
+      expect(prisma.pedido.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateStatus', () => {
+    it('should transition PAGO -> EM_PRODUCAO', async () => {
+      const pedido = makePedido({
+        status: 'PAGO',
+        itens: [
+          {
+            produtoId: 'prod-1',
+            quantidade: 1,
+            produto: { fichasTecnicas: [] },
+          },
+        ],
+        cliente: { nome: 'Test' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'EM_PRODUCAO' });
+
+      const result = await service.updateStatus('pedido-1', 'EM_PRODUCAO', 'admin-1');
+
+      expect(prisma.pedido.update).toHaveBeenCalledWith({
+        where: { id: 'pedido-1' },
+        data: { status: 'EM_PRODUCAO' },
+      });
+      expect(result.status).toBe('EM_PRODUCAO');
+    });
+
+    it('should transition EM_PRODUCAO -> PRONTO', async () => {
+      const pedido = makePedido({ status: 'EM_PRODUCAO', cliente: {} });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'PRONTO' });
+
+      const result = await service.updateStatus('pedido-1', 'PRONTO', 'admin-1');
+      expect(result.status).toBe('PRONTO');
+    });
+
+    it('should transition PRONTO -> ENTREGUE and enqueue invoice + review', async () => {
+      const pedido = makePedido({ status: 'PRONTO', cliente: {} });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'ENTREGUE' });
+
+      await service.updateStatus('pedido-1', 'ENTREGUE', 'admin-1');
+
+      const addCalls = ordersQueue.add.mock.calls.map((c: any) => c[0]);
+      expect(addCalls).toContain('emit-invoice');
+      expect(addCalls).toContain('request-review');
+    });
+
+    it('should call capacity.liberarSlot when cancelling', async () => {
+      const pedido = makePedido({ status: 'PAGO', cliente: {} });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.updateStatus('pedido-1', 'CANCELADO', 'admin-1', 'Teste');
+
+      expect(capacityService.liberarSlot).toHaveBeenCalledWith('pedido-1');
+    });
+
+    it('should reject invalid transition (ENTREGUE -> EM_PRODUCAO)', async () => {
+      const pedido = makePedido({ status: 'ENTREGUE', cliente: {} });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+
+      await expect(
+        service.updateStatus('pedido-1', 'EM_PRODUCAO', 'admin-1'),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.updateStatus('pedido-1', 'EM_PRODUCAO', 'admin-1'),
+      ).rejects.toThrow('Transição inválida');
+    });
+
+    it('should reject invalid transition (CANCELADO -> PAGO)', async () => {
+      const pedido = makePedido({ status: 'CANCELADO', cliente: {} });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+
+      await expect(
+        service.updateStatus('pedido-1', 'PAGO', 'admin-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw NotFoundException when pedido does not exist', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateStatus('missing', 'PAGO', 'admin-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('cancelByCliente', () => {
+    it('should cancel AGUARDANDO_PAGAMENTO order', async () => {
+      const pedido = makePedido({
+        status: 'AGUARDANDO_PAGAMENTO',
+        clienteId: 'c1',
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      const result = await service.cancelByCliente('pedido-1', 'c1', 'Não quero mais');
+
+      expect(result.status).toBe('CANCELADO');
+    });
+
+    it('should cancel PAGO order with 100% refund when despacho > janelaReembolsoHoras', async () => {
+      const dataAgendamento = new Date(Date.now() + 72 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Mudei de ideia');
+
+      const updateCalls = prisma.pedido.update.mock.calls;
+      const reembolsoCall = updateCalls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(reembolsoCall).toBeDefined();
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+      expect(reembolsoCall[0].data.valorCreditoFuturo == null ||
+        Number(reembolsoCall[0].data.valorCreditoFuturo) === 0).toBe(true);
+    });
+
+    it('should split 50% refund + 50% credito futuro when despacho is in middle tier', async () => {
+      const dataAgendamento = new Date(Date.now() + 36 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 200,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Festa adiada');
+
+      const updateCalls = prisma.pedido.update.mock.calls;
+      const reembolsoCall = updateCalls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(reembolsoCall).toBeDefined();
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+      expect(Number(reembolsoCall[0].data.valorCreditoFuturo)).toBe(100);
+    });
+
+    it('should cancel with 0% refund when despacho is closer than half janelaReembolsoHoras', async () => {
+      const dataAgendamento = new Date(Date.now() + 12 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 150,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Em cima da hora');
+
+      const updateCalls = prisma.pedido.update.mock.calls;
+      const reembolsoCall = updateCalls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(reembolsoCall).toBeDefined();
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(0);
+      expect(reembolsoCall[0].data.valorCreditoFuturo == null ||
+        Number(reembolsoCall[0].data.valorCreditoFuturo) === 0).toBe(true);
+    });
+
+    it('honors a custom janelaReembolsoHoras on the pedido', async () => {
+      const dataAgendamento = new Date(Date.now() + 30 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento,
+        janelaReembolsoHoras: 24,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', '?');
+
+      const reembolsoCall = prisma.pedido.update.mock.calls.find(
+        (c: any[]) => c[0].data?.valorReembolso !== undefined,
+      );
+      expect(Number(reembolsoCall[0].data.valorReembolso)).toBe(100);
+    });
+
+    it('generates a CreditoCliente when middle tier cancellation produces valorCreditoFuturo > 0', async () => {
+      const dataAgendamento = new Date(Date.now() + 36 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 200,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', 'Festa adiada');
+
+      expect(creditoService.gerar).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clienteId: 'c1',
+          valor: 100,
+          motivo: expect.stringMatching(/cancelamento/i),
+          pedidoOrigemId: 'pedido-1',
+          expiraEm: null,
+        }),
+      );
+    });
+
+    it('does not generate CreditoCliente when full refund', async () => {
+      const dataAgendamento = new Date(Date.now() + 72 * 60 * 60 * 1000);
+      const pedido = makePedido({
+        status: 'PAGO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento,
+        janelaReembolsoHoras: 48,
+        cliente: {},
+      });
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce(pedido)
+        .mockResolvedValueOnce(pedido);
+      prisma.pedido.update.mockResolvedValue({ ...pedido, status: 'CANCELADO' });
+
+      await service.cancelByCliente('pedido-1', 'c1', '?');
+
+      expect(creditoService.gerar).not.toHaveBeenCalled();
+    });
+
+    it('rejects cancellation when status is EM_PRODUCAO or later', async () => {
+      const pedido = makePedido({
+        status: 'EM_PRODUCAO',
+        clienteId: 'c1',
+        valorTotal: 100,
+        dataAgendamento: new Date(Date.now() + 72 * 60 * 60 * 1000),
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+
+      await expect(
+        service.cancelByCliente('pedido-1', 'c1', 'Tarde demais'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw NotFoundException when pedido belongs to another client', async () => {
+      const pedido = makePedido({ clienteId: 'other-client' });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+
+      await expect(
+        service.cancelByCliente('pedido-1', 'c1', 'Hack attempt'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException when pedido does not exist', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.cancelByCliente('missing', 'c1', 'Motivo'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('findByCliente', () => {
+    it('should return orders for the given client', async () => {
+      const pedidos = [
+        makePedido({ id: 'p1', clienteId: 'c1' }),
+        makePedido({ id: 'p2', clienteId: 'c1' }),
+      ];
+      prisma.pedido.findMany.mockResolvedValue(pedidos);
+
+      const result = await service.findByCliente('c1');
+
+      expect(prisma.pedido.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { clienteId: 'c1' },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+      expect(result).toHaveLength(2);
+    });
+
+    it('should return empty array when client has no orders', async () => {
+      prisma.pedido.findMany.mockResolvedValue([]);
+
+      const result = await service.findByCliente('c-no-orders');
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('createRascunhoWhatsApp', () => {
+    const baseData = {
+      itens: [{ produtoId: 'prod-1', quantidade: 2 }],
+    };
+
+    it('creates a pedido with status RASCUNHO_WHATSAPP and origem WHATSAPP', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      const draft = makePedido({
+        id: 'draft-1',
+        status: 'RASCUNHO_WHATSAPP',
+        valorTotal: 100,
+      });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(draft);
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.status).toBe('RASCUNHO_WHATSAPP');
+      expect(createCall.data.origem).toBe('WHATSAPP');
+      expect(createCall.data.clienteId).toBe('cliente-1');
+    });
+
+    it('computes valorSubtotal and valorTotal from itens, ignoring frete and desconto', async () => {
+      const produto = makeProduto({ precoVenda: new Prisma.Decimal(50) });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 3 }],
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.valorSubtotal).toBe(150);
+      expect(createCall.data.valorTotal).toBe(150);
+      expect(createCall.data.valorDesconto).toBe(0);
+      expect(createCall.data.valorFrete).toBe(0);
+    });
+
+    it('does NOT create a Pagamento (rascunho is not chargeable)', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.pagamento).toBeUndefined();
+    });
+
+    it('does NOT reserve a slot, does NOT enqueue payment-timeout, does NOT call gateway', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      expect(capacityService.reservarSlot).not.toHaveBeenCalled();
+      expect(ordersQueue.add).not.toHaveBeenCalled();
+      expect(gatewayService.createPixCharge).not.toHaveBeenCalled();
+    });
+
+    it('defaults modalidadeEntrega to RETIRADA_BALCAO when not provided', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.modalidadeEntrega).toBe('RETIRADA_BALCAO');
+    });
+
+    it('persists numeroPessoas, ocasiao and observacoes when provided', async () => {
+      const produto = makeProduto();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(makePedido());
+
+      await service.createRascunhoWhatsApp('cliente-1', {
+        ...baseData,
+        numeroPessoas: 20,
+        ocasiao: 'infantil',
+        observacoes: 'sem nozes',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.numeroPessoas).toBe(20);
+      expect(createCall.data.ocasiao).toBe('infantil');
+      expect(createCall.data.observacoes).toBe('sem nozes');
+    });
+
+    it('throws BadRequestException when any produto is unavailable', async () => {
+      prisma.produto.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.createRascunhoWhatsApp('cliente-1', baseData),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('logs audit with WHATSAPP_DRAFT_CREATED action', async () => {
+      const produto = makeProduto();
+      const draft = makePedido({ id: 'draft-x', status: 'RASCUNHO_WHATSAPP' });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(draft);
+
+      await service.createRascunhoWhatsApp('cliente-1', baseData);
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acao: 'ORDER.WHATSAPP_DRAFT_CREATED',
+          entidade: 'Pedido',
+          entidadeId: 'draft-x',
+          usuarioId: 'cliente-1',
+        }),
+      );
+    });
+  });
+
+  describe('adicionarFotoPronto', () => {
+    const makeFoto = (overrides: Partial<any> = {}) => ({
+      id: 'foto-1',
+      pedidoId: 'pedido-1',
+      url: 'https://example.com/bolo.jpg',
+      legenda: null,
+      enviadaEm: new Date(),
+      ...overrides,
+    });
+
+    it('throws NotFoundException when pedido does not exist', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.adicionarFotoPronto('pedido-x', 'https://img.com/a.jpg', undefined, 'op-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws BadRequestException when pedido status is not PRONTO', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(
+        makePedido({ status: 'EM_PRODUCAO', cliente: { nome: 'Vann', telefone: '11999' } }),
+      );
+
+      await expect(
+        service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException when url is empty', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(
+        makePedido({ status: 'PRONTO', cliente: { nome: 'Vann', telefone: '11999' } }),
+      );
+
+      await expect(
+        service.adicionarFotoPronto('pedido-1', '', undefined, 'op-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('creates a FotoEntrega with url and legenda when status is PRONTO', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(
+        makeFoto({ url: 'https://img.com/a.jpg', legenda: 'sai em 30min' }),
+      );
+
+      await service.adicionarFotoPronto(
+        'pedido-1',
+        'https://img.com/a.jpg',
+        'sai em 30min',
+        'op-1',
+      );
+
+      expect(prisma.fotoEntrega.create).toHaveBeenCalledWith({
+        data: {
+          pedidoId: 'pedido-1',
+          url: 'https://img.com/a.jpg',
+          legenda: 'sai em 30min',
+        },
+      });
+    });
+
+    it('accepts legenda as optional and stores null', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto());
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1');
+
+      const call = prisma.fotoEntrega.create.mock.calls[0][0];
+      expect(call.data.legenda).toBeNull();
+    });
+
+    it('sends notification to client with foto_bolo_pronto template', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999999999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto());
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1');
+
+      expect(notificationService.send).toHaveBeenCalledWith({
+        pedidoId: 'pedido-1',
+        telefone: '11999999999',
+        templateId: 'foto_bolo_pronto',
+        payload: expect.objectContaining({
+          nome: 'Vann',
+          pedidoId: 'pedido-1',
+          fotoUrl: 'https://img.com/a.jpg',
+        }),
+      });
+    });
+
+    it('does NOT send notification when client has no telefone', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: null },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto());
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', undefined, 'op-1');
+
+      expect(notificationService.send).not.toHaveBeenCalled();
+    });
+
+    it('logs audit with FOTO_PRONTO_ADDED action', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(makeFoto({ id: 'foto-x' }));
+
+      await service.adicionarFotoPronto('pedido-1', 'https://img.com/a.jpg', 'oi', 'op-1');
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acao: 'ORDER.FOTO_PRONTO_ADDED',
+          entidade: 'Pedido',
+          entidadeId: 'pedido-1',
+          usuarioId: 'op-1',
+        }),
+      );
+    });
+
+    it('returns the created foto', async () => {
+      const pedido = makePedido({
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Vann', telefone: '11999' },
+      });
+      const foto = makeFoto({ id: 'foto-x', url: 'https://img.com/a.jpg' });
+      prisma.pedido.findUnique.mockResolvedValue(pedido);
+      prisma.fotoEntrega.create.mockResolvedValue(foto);
+
+      const result = await service.adicionarFotoPronto(
+        'pedido-1',
+        'https://img.com/a.jpg',
+        undefined,
+        'op-1',
+      );
+
+      expect(result).toBe(foto);
+    });
+
+    it('rejeita 422 quando url da foto está fora do CDN', async () => {
+      storageService.assertCdnUrl.mockImplementationOnce(() => {
+        throw new (require('@nestjs/common').UnprocessableEntityException)('url fora');
+      });
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'PRONTO',
+        cliente: { id: 'c1', nome: 'Ana', telefone: '5511987654321' },
+      });
+
+      await expect(
+        service.adicionarFotoPronto('p1', 'https://evil.example/x.jpg', undefined, 'op-1'),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+  });
+
+  describe('findRascunhosWhatsApp', () => {
+    it('queries only pedidos with status RASCUNHO_WHATSAPP, newest first', async () => {
+      prisma.pedido.findMany.mockResolvedValue([]);
+
+      await service.findRascunhosWhatsApp();
+
+      expect(prisma.pedido.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'RASCUNHO_WHATSAPP' },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+    });
+
+    it('includes cliente (nome, telefone) and itens with produto nome', async () => {
+      prisma.pedido.findMany.mockResolvedValue([]);
+
+      await service.findRascunhosWhatsApp();
+
+      const call = prisma.pedido.findMany.mock.calls[0][0];
+      expect(call.include.cliente).toEqual({
+        select: { id: true, nome: true, telefone: true, email: true },
+      });
+      expect(call.include.itens.include.produto).toEqual({
+        select: { id: true, nome: true, slug: true },
+      });
+    });
+  });
+
+  describe('upcharge de customização extrema', () => {
+    it('create: pedido com imagensReferencia entra em AGUARDANDO_AVALIACAO_COMPLEXIDADE e sem cobrança', async () => {
+      const produto = makeProduto();
+      const criado = makePedido({ status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE' });
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(criado);
+
+      await service.create('cliente-1', {
+        itens: [
+          {
+            produtoId: 'prod-1',
+            quantidade: 1,
+            imagensReferencia: ['http://localhost/cdn/referencia/abc.jpg'],
+          },
+        ],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.status).toBe('AGUARDANDO_AVALIACAO_COMPLEXIDADE');
+      expect(gatewayService.createPixCharge).not.toHaveBeenCalled();
+      expect(ordersQueue.add).not.toHaveBeenCalledWith(
+        'payment-timeout',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('create: pedido sem imagensReferencia segue fluxo normal (AGUARDANDO_PAGAMENTO + Pix)', async () => {
+      const produto = makeProduto();
+      const criado = makePedido();
+      prisma.produto.findMany.mockResolvedValue([produto]);
+      prisma.pedido.create.mockResolvedValue(criado);
+      prisma.usuario.findUnique.mockResolvedValue({
+        id: 'cliente-1',
+        nome: 'Vann',
+        email: 'v@test.com',
+      });
+      prisma.pedido.findUnique.mockResolvedValue(criado);
+
+      await service.create('cliente-1', {
+        itens: [{ produtoId: 'prod-1', quantidade: 1 }],
+        modalidadeEntrega: 'RETIRADA_BALCAO',
+      });
+
+      const createCall = prisma.pedido.create.mock.calls[0][0];
+      expect(createCall.data.status).toBe('AGUARDANDO_PAGAMENTO');
+      expect(gatewayService.createPixCharge).toHaveBeenCalled();
+    });
+
+    it('avaliarComplexidade: rejeita custoComplexidade negativo', async () => {
+      await expect(
+        service.avaliarComplexidade('p1', 'op-1', [
+          { itemId: 'i1', custoComplexidade: -10 },
+        ]),
+      ).rejects.toThrow('custoComplexidade não pode ser negativo');
+    });
+
+    it('avaliarComplexidade: 404 quando pedido não existe', async () => {
+      prisma.pedido.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.avaliarComplexidade('inex', 'op-1', [
+          { itemId: 'i1', custoComplexidade: 50 },
+        ]),
+      ).rejects.toThrow('Pedido não encontrado');
+    });
+
+    it('avaliarComplexidade: erro quando pedido não está em AGUARDANDO_AVALIACAO_COMPLEXIDADE', async () => {
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'PAGO',
+        itens: [],
+        cliente: { id: 'c1', nome: 'V', email: 'v@x', telefone: null },
+      });
+
+      await expect(
+        service.avaliarComplexidade('p1', 'op-1', [
+          { itemId: 'i1', custoComplexidade: 50 },
+        ]),
+      ).rejects.toThrow(/AGUARDANDO_AVALIACAO_COMPLEXIDADE/);
+    });
+
+    it('avaliarComplexidade: 400 quando itemId não pertence ao pedido', async () => {
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE',
+        itens: [{ id: 'i-own' }],
+        cliente: { id: 'c1', nome: 'V', email: 'v@x', telefone: null },
+      });
+
+      await expect(
+        service.avaliarComplexidade('p1', 'op-1', [
+          { itemId: 'i-outsider', custoComplexidade: 30 },
+        ]),
+      ).rejects.toThrow(/não pertence/);
+    });
+
+    it('avaliarComplexidade: avalia todos os itens com imagens, recalcula total e gera cobrança Pix', async () => {
+      prisma.pedido.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE',
+        valorFrete: new Prisma.Decimal(0),
+        valorDesconto: new Prisma.Decimal(0),
+        valorCreditoUsado: new Prisma.Decimal(0),
+        clienteId: 'c1',
+        itens: [{ id: 'i1', precoUnitario: new Prisma.Decimal(100), quantidade: 1, imagensReferencia: ['ref.jpg'] }],
+        cliente: { id: 'c1', nome: 'V', email: 'v@x.com', telefone: '+5511999' },
+      });
+      prisma.itemPedido.findMany.mockResolvedValue([
+        {
+          id: 'i1',
+          precoUnitario: new Prisma.Decimal(100),
+          quantidade: 1,
+          imagensReferencia: ['ref.jpg'],
+          custoComplexidade: new Prisma.Decimal(30),
+          complexidadeAvaliadaEm: new Date(),
+        },
+      ]);
+      prisma.pedido.update.mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: 'p1', status: data.status, valorTotal: data.valorTotal, pagamento: { id: 'pg1' } }),
+      );
+      prisma.pagamento.update.mockResolvedValue({});
+
+      await service.avaliarComplexidade('p1', 'op-1', [
+        { itemId: 'i1', custoComplexidade: 30, complexidadeNotas: 'decoração elaborada' },
+      ]);
+
+      expect(prisma.itemPedido.update).toHaveBeenCalledWith({
+        where: { id: 'i1' },
+        data: expect.objectContaining({ custoComplexidade: 30, complexidadeNotas: 'decoração elaborada' }),
+      });
+      expect(prisma.pedido.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'p1' },
+          data: expect.objectContaining({
+            status: 'AGUARDANDO_PAGAMENTO',
+            valorSubtotal: 130,
+            valorTotal: 130,
+          }),
+        }),
+      );
+      expect(gatewayService.createPixCharge).toHaveBeenCalled();
+      expect(notificationService.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          templateId: 'avaliacao_complexidade_aprovada',
+        }),
+      );
+    });
+
+    it('avaliarComplexidade: NÃO transita quando algum item com imagens ainda não foi avaliado', async () => {
+      prisma.pedido.findUnique
+        .mockResolvedValueOnce({
+          id: 'p1',
+          status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE',
+          valorFrete: new Prisma.Decimal(0),
+          valorDesconto: new Prisma.Decimal(0),
+          valorCreditoUsado: new Prisma.Decimal(0),
+          clienteId: 'c1',
+          itens: [
+            { id: 'i1', precoUnitario: new Prisma.Decimal(100), quantidade: 1, imagensReferencia: ['a.jpg'] },
+            { id: 'i2', precoUnitario: new Prisma.Decimal(50), quantidade: 1, imagensReferencia: ['b.jpg'] },
+          ],
+          cliente: { id: 'c1', nome: 'V', email: 'v@x.com', telefone: '+5511999' },
+        })
+        .mockResolvedValueOnce({ id: 'p1', status: 'AGUARDANDO_AVALIACAO_COMPLEXIDADE', itens: [], pagamento: null });
+      prisma.itemPedido.findMany.mockResolvedValue([
+        { id: 'i1', precoUnitario: new Prisma.Decimal(100), quantidade: 1, imagensReferencia: ['a.jpg'], complexidadeAvaliadaEm: new Date() },
+        { id: 'i2', precoUnitario: new Prisma.Decimal(50), quantidade: 1, imagensReferencia: ['b.jpg'], complexidadeAvaliadaEm: null },
+      ]);
+
+      await service.avaliarComplexidade('p1', 'op-1', [
+        { itemId: 'i1', custoComplexidade: 25 },
+      ]);
+
+      expect(prisma.pedido.update).not.toHaveBeenCalled();
+      expect(gatewayService.createPixCharge).not.toHaveBeenCalled();
+    });
+  });
+});
