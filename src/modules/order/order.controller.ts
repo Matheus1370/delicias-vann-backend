@@ -13,6 +13,11 @@ import { OrderService } from './order.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateRascunhoWhatsAppDto } from './dto/create-rascunho-whatsapp.dto';
+import { UpdateStatusDto } from './dto/update-status.dto';
+import { FotoProntoDto } from './dto/foto-pronto.dto';
+import { AvaliarComplexidadeDto } from './dto/avaliar-complexidade.dto';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -20,12 +25,12 @@ export class OrderController {
   constructor(private orderService: OrderService) {}
 
   @Post()
-  create(@Body() body: any, @Request() req: any) {
+  create(@Body() body: CreateOrderDto, @Request() req: any) {
     return this.orderService.create(req.user.sub, body);
   }
 
   @Post('rascunho-whatsapp')
-  createRascunhoWhatsApp(@Body() body: any, @Request() req: any) {
+  createRascunhoWhatsApp(@Body() body: CreateRascunhoWhatsAppDto, @Request() req: any) {
     return this.orderService.createRascunhoWhatsApp(req.user.sub, body);
   }
 
@@ -75,7 +80,7 @@ export class OrderController {
   @Patch(':id/status')
   updateStatus(
     @Param('id') id: string,
-    @Body() body: { status: string; motivo?: string },
+    @Body() body: UpdateStatusDto,
     @Request() req: any,
   ) {
     return this.orderService.updateStatus(id, body.status, req.user.sub, body.motivo);
@@ -91,7 +96,7 @@ export class OrderController {
   @Post(':id/foto-pronto')
   adicionarFotoPronto(
     @Param('id') id: string,
-    @Body() body: { url: string; legenda?: string },
+    @Body() body: FotoProntoDto,
     @Request() req: any,
   ) {
     return this.orderService.adicionarFotoPronto(id, body.url, body.legenda, req.user.sub);
@@ -101,12 +106,9 @@ export class OrderController {
   @Patch(':id/avaliar-complexidade')
   avaliarComplexidade(
     @Param('id') id: string,
-    @Body()
-    body: {
-      avaliacoes: Array<{ itemId: string; custoComplexidade: number; complexidadeNotas?: string }>;
-    },
+    @Body() body: AvaliarComplexidadeDto,
     @Request() req: any,
   ) {
-    return this.orderService.avaliarComplexidade(id, req.user.sub, body.avaliacoes ?? []);
+    return this.orderService.avaliarComplexidade(id, req.user.sub, body.avaliacoes);
   }
 }

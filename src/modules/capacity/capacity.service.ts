@@ -7,6 +7,18 @@ export class CapacityService {
 
   async findAvailableSlots(data: string, pontosNecessarios: number) {
     const date = new Date(data);
+
+    // Verifica se há janela sazonal ativa para essa data com capacidade reduzida
+    const janela = await this.prisma.janelaSazonal.findFirst({
+      where: {
+        ativa: true,
+        inicio: { lte: date },
+        fim: { gte: date },
+        capacidadeReduzida: { not: null },
+      },
+    });
+    const fatorReducao = janela?.capacidadeReduzida ? Number(janela.capacidadeReduzida) : 1;
+
     const slots = await this.prisma.slotProducao.findMany({
       where: {
         data: date,
@@ -16,12 +28,20 @@ export class CapacityService {
     });
 
     return slots
-      .filter((s) => s.capacidadeMaxima - s.capacidadeOcupada >= pontosNecessarios)
-      .map((s) => ({
-        ...s,
-        capacidadeDisponivel: s.capacidadeMaxima - s.capacidadeOcupada,
-        percentualOcupado: Math.round((s.capacidadeOcupada / s.capacidadeMaxima) * 100),
-      }));
+      .filter((s) => {
+        const capacidadeEfetiva = Math.floor(s.capacidadeMaxima * fatorReducao);
+        return capacidadeEfetiva - s.capacidadeOcupada >= pontosNecessarios;
+      })
+      .map((s) => {
+        const capacidadeEfetiva = Math.floor(s.capacidadeMaxima * fatorReducao);
+        return {
+          ...s,
+          capacidadeMaxima: capacidadeEfetiva, // reflete a redução sazonal
+          capacidadeDisponivel: capacidadeEfetiva - s.capacidadeOcupada,
+          percentualOcupado: Math.round((s.capacidadeOcupada / capacidadeEfetiva) * 100),
+          janelasSazonal: janela ? { nome: janela.nome, fatorReducao } : null,
+        };
+      });
   }
 
   async findSlotsRange(dataInicio: string, dataFim: string) {
@@ -105,6 +125,44 @@ export class CapacityService {
     };
 
     return externalTx ? run(externalTx) : this.prisma.$transaction(run);
+  }
+
+  async atualizarSlot(
+    id: string,
+    data: {
+      horaInicio?: string;
+      horaFim?: string;
+      capacidadeMaxima?: number;
+      status?: string;
+      observacao?: string;
+    },
+  ) {
+    const slot = await this.prisma.slotProducao.findUnique({ where: { id } });
+    if (!slot) throw new NotFoundException('Slot não encontrado');
+
+    const dateStr = slot.data.toISOString().split('T')[0];
+    return this.prisma.slotProducao.update({
+      where: { id },
+      data: {
+        ...(data.horaInicio && { horaInicio: new Date(`${dateStr}T${data.horaInicio}`) }),
+        ...(data.horaFim && { horaFim: new Date(`${dateStr}T${data.horaFim}`) }),
+        ...(data.capacidadeMaxima !== undefined && { capacidadeMaxima: data.capacidadeMaxima }),
+        ...(data.status && { status: data.status as any }),
+        ...(data.observacao !== undefined && { observacao: data.observacao }),
+      },
+    });
+  }
+
+  async deletarSlot(id: string) {
+    const slot = await this.prisma.slotProducao.findUnique({
+      where: { id },
+      include: { reservas: true },
+    });
+    if (!slot) throw new NotFoundException('Slot não encontrado');
+    if (slot.reservas.length > 0) {
+      throw new ConflictException('Slot possui pedidos reservados e não pode ser excluído');
+    }
+    return this.prisma.slotProducao.delete({ where: { id } });
   }
 
   async criarSlots(data: {

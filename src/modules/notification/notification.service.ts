@@ -31,14 +31,16 @@ export class NotificationService {
   }
 
   async send(data: {
-    pedidoId: string;
+    pedidoId?: string | null;
+    usuarioId?: string | null;
     telefone: string;
     templateId: string;
     payload: Record<string, any>;
   }) {
     const notificacao = await this.prisma.notificacao.create({
       data: {
-        pedidoId: data.pedidoId,
+        pedidoId: data.pedidoId ?? null,
+        usuarioId: data.usuarioId ?? null,
         canal: 'WHATSAPP',
         templateId: data.templateId,
         payload: data.payload,
@@ -62,6 +64,7 @@ export class NotificationService {
       } catch (smsErr: any) {
         this.logger.warn(`SMS falhou para ${data.pedidoId}, tentando e-mail...`);
         try {
+          if (!data.pedidoId) throw new Error('pedidoId ausente para fallback de e-mail');
           const email = await this.emailDoPedido(data.pedidoId);
           await this.sendEmail(email, this.buildMessage(data.templateId, data.payload));
           await this.prisma.notificacao.update({

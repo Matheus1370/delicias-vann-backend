@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from '../notification/notification.service';
 
 const CODE_LENGTH = 7;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -16,7 +17,10 @@ const VALIDADE_CUPOM_DIAS = 90;
 export class IndicacaoService {
   private readonly logger = new Logger(IndicacaoService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notifications: NotificationService,
+  ) {}
 
   async gerar(indicadorId: string, indicadoEmail?: string) {
     const codigo = this.gerarCodigo();
@@ -68,41 +72,62 @@ export class IndicacaoService {
   }
 
   async processarConversao(clienteId: string, pedidoId: string) {
-    const indicacao = await this.prisma.indicacao.findFirst({
+    const indicacoes = await this.prisma.indicacao.findMany({
       where: { indicadoUsuarioId: clienteId, status: 'PENDENTE' },
+      include: { indicador: { select: { id: true, nome: true, telefone: true } } },
     });
-    if (!indicacao) return;
+    if (indicacoes.length === 0) return;
 
-    try {
-      const codigoCupom = `OBRIGADA-${this.gerarCodigo(5)}`;
-      const validoAte = new Date();
-      validoAte.setDate(validoAte.getDate() + VALIDADE_CUPOM_DIAS);
+    for (const indicacao of indicacoes) {
+      try {
+        const codigoCupom = `OBRIGADA-${this.gerarCodigo(5)}`;
+        const validoAte = new Date();
+        validoAte.setDate(validoAte.getDate() + VALIDADE_CUPOM_DIAS);
 
-      const cupom = await this.prisma.cupom.create({
-        data: {
-          codigo: codigoCupom,
-          tipo: 'PERCENTUAL',
-          valor: RECOMPENSA_PERCENTUAL,
-          minimoCompra: 0,
-          usoMaximo: 1,
-          validoAte,
-          descricao: `Indicou um amigo (indicação ${indicacao.codigo})`,
-          campanha: 'INDICACAO',
-          clienteId: indicacao.indicadorId,
-        },
-      });
+        const cupom = await this.prisma.cupom.create({
+          data: {
+            codigo: codigoCupom,
+            tipo: 'PERCENTUAL',
+            valor: RECOMPENSA_PERCENTUAL,
+            minimoCompra: 0,
+            usoMaximo: 1,
+            validoAte,
+            descricao: `Indicou um amigo (indicação ${indicacao.codigo})`,
+            campanha: 'INDICACAO',
+            clienteId: indicacao.indicadorId,
+          },
+        });
 
-      await this.prisma.indicacao.update({
-        where: { id: indicacao.id },
-        data: {
-          status: 'CONVERTIDA',
-          pedidoConvertidoId: pedidoId,
-          cupomRecompensaId: cupom.id,
-          recompensaValor: RECOMPENSA_PERCENTUAL,
-        },
-      });
-    } catch (err: any) {
-      this.logger.warn(`Falha ao processar indicação ${indicacao.codigo}: ${err?.message ?? err}`);
+        await this.prisma.indicacao.update({
+          where: { id: indicacao.id },
+          data: {
+            status: 'CONVERTIDA',
+            pedidoConvertidoId: pedidoId,
+            cupomRecompensaId: cupom.id,
+            recompensaValor: RECOMPENSA_PERCENTUAL,
+          },
+        });
+
+        const indicador = (indicacao as any).indicador;
+        if (indicador?.telefone) {
+          await this.notifications.send({
+            pedidoId: null,
+            usuarioId: indicador.id,
+            telefone: indicador.telefone,
+            templateId: 'indicacao_convertida',
+            payload: {
+              nome: indicador.nome,
+              codigoCupom,
+              desconto: `${RECOMPENSA_PERCENTUAL}%`,
+              validoAte: validoAte.toLocaleDateString('pt-BR'),
+            },
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Falha ao processar indicação ${indicacao.codigo}: ${err?.message ?? err}`,
+        );
+      }
     }
   }
 

@@ -8,7 +8,6 @@ import {
   UnprocessableEntityException,
   forwardRef,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CapacityService } from '../capacity/capacity.service';
 import { NotificationService } from '../notification/notification.service';
@@ -25,8 +24,6 @@ import { RegrasService } from '../regras/regras.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { Prisma } from '@prisma/client';
-
-const CARTAO_HABILITADO = false;
 
 interface CreateOrderData {
   itens: Array<{
@@ -84,7 +81,6 @@ export class OrderService {
     private sazonal: SazonalService,
     private storage: StorageService,
     private regras: RegrasService,
-    private config: ConfigService,
     @InjectQueue('orders') private ordersQueue: Queue,
   ) {}
 
@@ -109,66 +105,22 @@ export class OrderService {
       throw new BadRequestException('Um ou mais produtos não estão disponíveis');
     }
 
-    for (const item of data.itens ?? []) {
+    for (const item of data.itens) {
       for (const url of item.imagensReferencia ?? []) {
         this.storage.assertCdnUrl(url);
       }
     }
 
-    let dataAgendamentoFinal: string | undefined = data.dataAgendamento;
     const bufferHoras = data.bufferHorasAntes ?? 2;
-    if (data.horaFestaPrevista) {
-      const minBuffer = BUFFER_MIN_HORAS[data.modalidadeEntrega] ?? 0;
-      if (bufferHoras < minBuffer) {
-        throw new UnprocessableEntityException(
-          `Buffer de ${bufferHoras}h não atende a modalidade ${data.modalidadeEntrega} (mínimo ${minBuffer}h).`,
-        );
-      }
-      const festaTs = new Date(data.horaFestaPrevista).getTime();
-      const despacho = new Date(festaTs - bufferHoras * 60 * 60 * 1000);
-      dataAgendamentoFinal = despacho.toISOString();
-    }
+    const dataAgendamentoFinal = this.resolverDataAgendamento(data, bufferHoras);
 
-    const bloqueios: string[] = [];
-    for (const item of data.itens) {
-      const { violacoes } = await this.regras.avaliar({
-        produtoId: item.produtoId,
-        opcoesEscolhidas: (item.opcoesEscolhidas ?? {}) as Record<string, string>,
-        modalidade: data.modalidadeEntrega,
-        dataAgendamento: dataAgendamentoFinal,
-        numeroPessoas: data.numeroPessoas,
-      });
-      for (const v of violacoes) {
-        if (v.nivel === 'BLOQUEAR') bloqueios.push(v.mensagem);
-      }
-    }
-    if (bloqueios.length > 0) {
-      throw new UnprocessableEntityException(
-        `Combinação inviável: ${bloqueios.join('; ')}`,
-      );
-    }
-
-    const intersecaoModalidades = produtos.reduce<string[] | null>((acc, p) => {
-      const permitidas = (p.modalidadesPermitidas ?? []) as string[];
-      if (acc === null) return [...permitidas];
-      return acc.filter((m) => permitidas.includes(m));
-    }, null);
-    if (intersecaoModalidades && !intersecaoModalidades.includes(data.modalidadeEntrega)) {
-      const incompativel = produtos.find(
-        (p) => !((p.modalidadesPermitidas ?? []) as string[]).includes(data.modalidadeEntrega),
-      );
-      throw new UnprocessableEntityException(
-        `Modalidade ${data.modalidadeEntrega} não permitida para este pedido${
-          incompativel?.nome ? ` (item incompatível: ${incompativel.nome})` : ''
-        }`,
-      );
-    }
+    await this.validarRegrasBloqueio(data.itens, data.modalidadeEntrega, dataAgendamentoFinal, data.numeroPessoas);
+    this.validarModalidades(data.modalidadeEntrega, produtos);
 
     const itensMapeados = data.itens.map((item) => {
       const produto = produtos.find((p) => p.id === item.produtoId)!;
       const ficha = produto.fichasTecnicas[0];
       const { precoUnitario, pesoKg, pontosExtra } = this.precoMontagem(produto, item);
-
       return {
         produtoId: item.produtoId,
         quantidade: item.quantidade,
@@ -185,7 +137,6 @@ export class OrderService {
     const exigeAvaliacaoComplexidade = data.itens.some(
       (it) => (it.imagensReferencia?.length ?? 0) > 0,
     );
-
     const valorSubtotal = itensMapeados.reduce(
       (acc, i) => acc + Number(i.precoUnitario) * i.quantidade,
       0,
@@ -195,83 +146,12 @@ export class OrderService {
       0,
     );
 
-    const configEntrega = await this.entrega.getByModalidade(data.modalidadeEntrega);
-    if (configEntrega) {
-      const minimo = Number(configEntrega.valorMinimoPedido);
-      if (minimo > 0 && valorSubtotal < minimo) {
-        throw new UnprocessableEntityException(
-          `Valor mínimo de R$ ${minimo.toFixed(2)} para a modalidade ${data.modalidadeEntrega}.`,
-        );
-      }
-    }
-    const valorFrete = await this.entrega.computeFrete(data.modalidadeEntrega, valorSubtotal);
+    const valorFrete = await this.calcularFrete(data.modalidadeEntrega, valorSubtotal);
+    const { valorDesconto, cupomId, empresaId, valorCreditoUsado } =
+      await this.calcularDescontos(data, valorSubtotal, valorFrete, clienteId);
 
-    let valorDesconto = 0;
-    let cupomId: string | undefined;
-    if (data.cupomCodigo) {
-      const result = await this.cupom.validate(data.cupomCodigo, valorSubtotal, clienteId);
-      valorDesconto = result.desconto;
-      cupomId = result.cupom.id;
-    }
-
-    const descontoEmpresa = await this.empresa.getDescontoAtivo(clienteId);
-    let empresaId: string | undefined;
-    if (descontoEmpresa) {
-      const descontoValor = (valorSubtotal * descontoEmpresa.descontoPct) / 100;
-      valorDesconto += descontoValor;
-      empresaId = descontoEmpresa.empresaId;
-    }
-
-    let valorCreditoUsado = 0;
-    if (data.usarCredito) {
-      const saldoCredito = await this.credito.saldoTotal(clienteId);
-      const valorPosCupom = Math.max(0, valorSubtotal + valorFrete - valorDesconto);
-      valorCreditoUsado = Math.min(saldoCredito, valorPosCupom);
-    }
-
-    const leadTimePorItem = data.itens.map((item) => {
-      const produto = produtos.find((p) => p.id === item.produtoId)!;
-      const opcoes = (produto as any).opcoesMontagem as
-        | Array<{ label: string; leadTimeHorasExtra?: number }>
-        | undefined;
-      const labelsEscolhidos = new Set(
-        Object.values(item.opcoesEscolhidas ?? {})
-          .filter((v): v is string => typeof v === 'string')
-          .map((v) => v.toLowerCase()),
-      );
-      const extras = (opcoes ?? [])
-        .filter((op) => labelsEscolhidos.has(op.label.toLowerCase()))
-        .reduce((acc, op) => acc + (op.leadTimeHorasExtra ?? 0), 0)
-        + (Number(item.pesoKg ?? 0) >= 3 ? 24 : 0);
-      return produto.leadTimeHoras + extras;
-    });
-    const maxLeadHoras = Math.max(...leadTimePorItem, 24);
-
-    if (dataAgendamentoFinal) {
-      const ts = new Date(dataAgendamentoFinal).getTime();
-      const minTs = Date.now() + maxLeadHoras * 60 * 60 * 1000;
-      if (ts < minTs) {
-        const dias = Math.ceil(maxLeadHoras / 24);
-        throw new UnprocessableEntityException(
-          `Prazo mínimo de ${dias} dias (${maxLeadHoras}h) de antecedência para essa configuração.`,
-        );
-      }
-
-      const temCustomizacao = data.itens.some(
-        (i) =>
-          (i.opcoesEscolhidas && Object.keys(i.opcoesEscolhidas).length > 0) ||
-          !!i.personalizacao,
-      );
-      const sazonalCheck = await this.sazonal.checarPedido({
-        dataAlvo: new Date(dataAgendamentoFinal),
-        temCustomizacao,
-      });
-      if (!sazonalCheck.ok) {
-        throw new UnprocessableEntityException(
-          sazonalCheck.motivo ?? 'Pedido bloqueado por janela sazonal.',
-        );
-      }
-    }
+    const maxLeadHoras = this.calcularMaxLeadHoras(data.itens, produtos);
+    await this.validarAgendamento(dataAgendamentoFinal, maxLeadHoras, data.itens);
 
     const slaDeadline = new Date(Date.now() + maxLeadHoras * 60 * 60 * 1000);
 
@@ -315,14 +195,12 @@ export class OrderService {
       if (data.slotId && pontosTotal > 0) {
         await this.capacity.reservarSlot(criado.id, data.slotId, pontosTotal, tx);
       }
-
       if (cupomId) {
         await tx.cupom.update({
           where: { id: cupomId },
           data: { usoAtual: { increment: 1 } },
         });
       }
-
       if (!exigeAvaliacaoComplexidade) {
         await this.ordersQueue.add(
           'payment-timeout',
@@ -330,7 +208,6 @@ export class OrderService {
           { delay: 30 * 60 * 1000 },
         );
       }
-
       if (valorCreditoUsado > 0) {
         await this.credito.consumir(clienteId, valorCreditoUsado, tx);
       }
@@ -349,59 +226,11 @@ export class OrderService {
       return pedido;
     }
 
-    const metodoPagamento =
-      CARTAO_HABILITADO && data.metodoPagamento === 'CARTAO' ? 'CARTAO' : 'PIX';
     try {
       const cliente = (await this.prisma.usuario.findUnique({ where: { id: clienteId } }))!;
-      if (metodoPagamento === 'CARTAO') {
-        const totalReais = Number(pedido.valorTotal);
-        let parcelas = Math.min(3, Math.max(1, Math.floor(data.parcelas ?? 1)));
-        const maxPorMinimo = Math.max(1, Math.floor(totalReais / 10));
-        parcelas = Math.min(parcelas, maxPorMinimo);
-        const urlAcompanhamento = `${this.config.get<string>('APP_BASE_URL') ?? 'http://localhost'}/pedidos/${pedido.id}`;
-        const cobranca = await this.gateway.createCardCheckout({
-          pedidoId: pedido.id,
-          valorCentavos: Math.round(totalReais * 100),
-          parcelas,
-          clienteNome: cliente.nome,
-          clienteEmail: cliente.email,
-          clienteTelefone: cliente.telefone ?? undefined,
-          returnUrl: urlAcompanhamento,
-          completionUrl: urlAcompanhamento,
-        });
-        await this.prisma.pagamento.update({
-          where: { pedidoId: pedido.id },
-          data: {
-            metodo: 'CARTAO',
-            parcelas,
-            checkoutUrl: cobranca.checkoutUrl,
-            gatewayTransacaoId: cobranca.transacaoId,
-            gatewayPayloadRaw: cobranca.raw,
-          },
-        });
-      } else {
-        const cobranca = await this.gateway.createPixCharge({
-          pedidoId: pedido.id,
-          valorCentavos: Math.round(Number(pedido.valorTotal) * 100),
-          clienteNome: cliente.nome,
-          clienteEmail: cliente.email,
-          clienteTelefone: cliente.telefone ?? undefined,
-          expiresInMinutes: 30,
-        });
-        await this.prisma.pagamento.update({
-          where: { pedidoId: pedido.id },
-          data: {
-            metodo: 'PIX',
-            gatewayTransacaoId: cobranca.transacaoId,
-            pixCopiaCola: cobranca.pixCopiaCola,
-            pixQrCodeUrl: cobranca.pixQrCodeUrl,
-            expiresAt: cobranca.expiresAt,
-            gatewayPayloadRaw: cobranca.raw,
-          },
-        });
-      }
+      await this.gerarCobrancaPix(pedido.id, Number(pedido.valorTotal), cliente);
     } catch (err: any) {
-      this.logger.error(`Falha ao gerar cobrança (${metodoPagamento}) do pedido ${pedido.id}: ${err?.message}`);
+      this.logger.error(`Falha ao gerar cobrança PIX do pedido ${pedido.id}: ${err?.message}`);
     }
 
     await this.audit.log({
@@ -727,6 +556,195 @@ export class OrderService {
     });
   }
 
+  // ─── Helpers privados do create() ────────────────────────────────────────
+
+  private resolverDataAgendamento(
+    data: Pick<CreateOrderData, 'dataAgendamento' | 'horaFestaPrevista' | 'modalidadeEntrega'>,
+    bufferHoras: number,
+  ): string | undefined {
+    if (!data.horaFestaPrevista) return data.dataAgendamento;
+    const minBuffer = BUFFER_MIN_HORAS[data.modalidadeEntrega] ?? 0;
+    if (bufferHoras < minBuffer) {
+      throw new UnprocessableEntityException(
+        `Buffer de ${bufferHoras}h não atende a modalidade ${data.modalidadeEntrega} (mínimo ${minBuffer}h).`,
+      );
+    }
+    const festaTs = new Date(data.horaFestaPrevista).getTime();
+    return new Date(festaTs - bufferHoras * 60 * 60 * 1000).toISOString();
+  }
+
+  private async validarRegrasBloqueio(
+    itens: CreateOrderData['itens'],
+    modalidade: string,
+    dataAgendamento: string | undefined,
+    numeroPessoas: number | undefined,
+  ): Promise<void> {
+    const bloqueios: string[] = [];
+    for (const item of itens) {
+      const { violacoes } = await this.regras.avaliar({
+        produtoId: item.produtoId,
+        opcoesEscolhidas: (item.opcoesEscolhidas ?? {}) as Record<string, string>,
+        modalidade,
+        dataAgendamento,
+        numeroPessoas,
+      });
+      for (const v of violacoes) {
+        if (v.nivel === 'BLOQUEAR') bloqueios.push(v.mensagem);
+      }
+    }
+    if (bloqueios.length > 0) {
+      throw new UnprocessableEntityException(`Combinação inviável: ${bloqueios.join('; ')}`);
+    }
+  }
+
+  private validarModalidades(modalidade: string, produtos: any[]): void {
+    const intersecao = produtos.reduce<string[] | null>((acc, p) => {
+      const permitidas = (p.modalidadesPermitidas ?? []) as string[];
+      if (acc === null) return [...permitidas];
+      return acc.filter((m) => permitidas.includes(m));
+    }, null);
+    if (intersecao && !intersecao.includes(modalidade)) {
+      const incompativel = produtos.find(
+        (p) => !((p.modalidadesPermitidas ?? []) as string[]).includes(modalidade),
+      );
+      throw new UnprocessableEntityException(
+        `Modalidade ${modalidade} não permitida para este pedido${
+          incompativel?.nome ? ` (item incompatível: ${incompativel.nome})` : ''
+        }`,
+      );
+    }
+  }
+
+  private calcularMaxLeadHoras(itens: CreateOrderData['itens'], produtos: any[]): number {
+    const leadTimePorItem = itens.map((item) => {
+      const produto = produtos.find((p) => p.id === item.produtoId)!;
+      const opcoes = (produto.opcoesMontagem ?? []) as Array<{
+        label: string;
+        leadTimeHorasExtra?: number;
+      }>;
+      const labelsEscolhidos = new Set(
+        Object.values(item.opcoesEscolhidas ?? {})
+          .filter((v): v is string => typeof v === 'string')
+          .map((v) => v.toLowerCase()),
+      );
+      const extras =
+        opcoes
+          .filter((op) => labelsEscolhidos.has(op.label.toLowerCase()))
+          .reduce((acc, op) => acc + (op.leadTimeHorasExtra ?? 0), 0) +
+        (Number(item.pesoKg ?? 0) >= 3 ? 24 : 0);
+      return produto.leadTimeHoras + extras;
+    });
+    return Math.max(...leadTimePorItem, 24);
+  }
+
+  private async validarAgendamento(
+    dataAgendamentoFinal: string | undefined,
+    maxLeadHoras: number,
+    itens: CreateOrderData['itens'],
+  ): Promise<void> {
+    if (!dataAgendamentoFinal) return;
+    const ts = new Date(dataAgendamentoFinal).getTime();
+    const minTs = Date.now() + maxLeadHoras * 60 * 60 * 1000;
+    if (ts < minTs) {
+      const dias = Math.ceil(maxLeadHoras / 24);
+      throw new UnprocessableEntityException(
+        `Prazo mínimo de ${dias} dias (${maxLeadHoras}h) de antecedência para essa configuração.`,
+      );
+    }
+    const temCustomizacao = itens.some(
+      (i) =>
+        (i.opcoesEscolhidas && Object.keys(i.opcoesEscolhidas).length > 0) || !!i.personalizacao,
+    );
+    const sazonalCheck = await this.sazonal.checarPedido({
+      dataAlvo: new Date(dataAgendamentoFinal),
+      temCustomizacao,
+    });
+    if (!sazonalCheck.ok) {
+      throw new UnprocessableEntityException(
+        sazonalCheck.motivo ?? 'Pedido bloqueado por janela sazonal.',
+      );
+    }
+  }
+
+  private async calcularFrete(modalidade: string, valorSubtotal: number): Promise<number> {
+    const configEntrega = await this.entrega.getByModalidade(modalidade);
+    if (configEntrega) {
+      const minimo = Number(configEntrega.valorMinimoPedido);
+      if (minimo > 0 && valorSubtotal < minimo) {
+        throw new UnprocessableEntityException(
+          `Valor mínimo de R$ ${minimo.toFixed(2)} para a modalidade ${modalidade}.`,
+        );
+      }
+    }
+    return this.entrega.computeFrete(modalidade, valorSubtotal);
+  }
+
+  private async calcularDescontos(
+    data: Pick<CreateOrderData, 'cupomCodigo' | 'usarCredito'>,
+    valorSubtotal: number,
+    valorFrete: number,
+    clienteId: string,
+  ): Promise<{
+    valorDesconto: number;
+    cupomId?: string;
+    empresaId?: string;
+    valorCreditoUsado: number;
+  }> {
+    let valorDesconto = 0;
+    let cupomId: string | undefined;
+    let empresaId: string | undefined;
+
+    if (data.cupomCodigo) {
+      const result = await this.cupom.validate(data.cupomCodigo, valorSubtotal, clienteId);
+      valorDesconto = result.desconto;
+      cupomId = result.cupom.id;
+    }
+
+    const descontoEmpresa = await this.empresa.getDescontoAtivo(clienteId);
+    if (descontoEmpresa) {
+      valorDesconto += (valorSubtotal * descontoEmpresa.descontoPct) / 100;
+      empresaId = descontoEmpresa.empresaId;
+    }
+
+    let valorCreditoUsado = 0;
+    if (data.usarCredito) {
+      const saldo = await this.credito.saldoTotal(clienteId);
+      const valorPosCupom = Math.max(0, valorSubtotal + valorFrete - valorDesconto);
+      valorCreditoUsado = Math.min(saldo, valorPosCupom);
+    }
+
+    return { valorDesconto, cupomId, empresaId, valorCreditoUsado };
+  }
+
+  private async gerarCobrancaPix(
+    pedidoId: string,
+    valorTotal: number,
+    cliente: { nome: string; email: string; telefone?: string | null },
+    expiresInMinutes = 30,
+  ): Promise<void> {
+    const cobranca = await this.gateway.createPixCharge({
+      pedidoId,
+      valorCentavos: Math.round(valorTotal * 100),
+      clienteNome: cliente.nome,
+      clienteEmail: cliente.email,
+      clienteTelefone: cliente.telefone ?? undefined,
+      expiresInMinutes,
+    });
+    await this.prisma.pagamento.update({
+      where: { pedidoId },
+      data: {
+        metodo: 'PIX',
+        gatewayTransacaoId: cobranca.transacaoId,
+        pixCopiaCola: cobranca.pixCopiaCola,
+        pixQrCodeUrl: cobranca.pixQrCodeUrl,
+        expiresAt: cobranca.expiresAt,
+        gatewayPayloadRaw: cobranca.raw,
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   private precoMontagem(
     produto: any,
     item: { pesoKg?: number; opcoesEscolhidas?: any },
@@ -1008,23 +1026,19 @@ export class OrderService {
 
     if (pedidoAtualizado?.status === 'AGUARDANDO_PAGAMENTO') {
       try {
-        const cobranca = await this.gateway.createPixCharge({
+        const expiresInMinutes = 60 * 24; // 24h para pedidos de complexidade
+        await this.gerarCobrancaPix(
           pedidoId,
-          valorCentavos: Math.round(Number(pedidoAtualizado.valorTotal) * 100),
-          clienteNome: pedido.cliente.nome,
-          clienteEmail: pedido.cliente.email,
-          expiresInMinutes: 60 * 24,
-        });
-        await this.prisma.pagamento.update({
-          where: { pedidoId },
-          data: {
-            gatewayTransacaoId: cobranca.transacaoId,
-            pixCopiaCola: cobranca.pixCopiaCola,
-            pixQrCodeUrl: cobranca.pixQrCodeUrl,
-            expiresAt: cobranca.expiresAt,
-            gatewayPayloadRaw: cobranca.raw,
-          },
-        });
+          Number(pedidoAtualizado.valorTotal),
+          pedido.cliente,
+          expiresInMinutes,
+        );
+        // Cancela automaticamente se não pagar dentro do prazo do PIX
+        await this.ordersQueue.add(
+          'payment-timeout',
+          { pedidoId },
+          { delay: expiresInMinutes * 60 * 1000 },
+        );
         if (pedido.cliente.telefone) {
           await this.notifications.send({
             pedidoId,
@@ -1038,6 +1052,9 @@ export class OrderService {
           });
         }
       } catch (err: any) {
+        this.logger.error(
+          `Falha ao gerar cobrança PIX pós-complexidade do pedido ${pedidoId}: ${err?.message}`,
+        );
       }
     }
 

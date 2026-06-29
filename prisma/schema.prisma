@@ -196,8 +196,9 @@ model Endereco {
   principal   Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  usuario Usuario  @relation(fields: [usuarioId], references: [id])
-  pedidos Pedido[]
+  usuario     Usuario     @relation(fields: [usuarioId], references: [id])
+  pedidos     Pedido[]
+  assinaturas Assinatura[]
 
   @@index([usuarioId])
   @@map("enderecos")
@@ -758,21 +759,24 @@ model Cupom {
 }
 
 model Assinatura {
-  id              String           @id @default(uuid())
-  clienteId       String
-  produtoId       String
-  status          AssinaturaStatus @default(ATIVA)
-  frequenciaDias  Int              @default(30)
-  proximaGeracao  DateTime
-  ultimaGeracaoEm DateTime?
-  diaPreferido    Int?
-  observacoes     String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                 String            @id @default(uuid())
+  clienteId          String
+  produtoId          String
+  status             AssinaturaStatus  @default(ATIVA)
+  frequenciaDias     Int               @default(30)
+  proximaGeracao     DateTime
+  ultimaGeracaoEm    DateTime?
+  diaPreferido       Int?
+  observacoes        String?
+  modalidadeEntrega  EntregaModalidade @default(RETIRADA_BALCAO)
+  enderecoEntregaId  String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
-  cliente Usuario  @relation(fields: [clienteId], references: [id])
-  produto Produto  @relation(fields: [produtoId], references: [id])
-  pedidos Pedido[]
+  cliente         Usuario          @relation(fields: [clienteId], references: [id])
+  produto         Produto          @relation(fields: [produtoId], references: [id])
+  enderecoEntrega Endereco?        @relation(fields: [enderecoEntregaId], references: [id])
+  pedidos         Pedido[]
 
   @@index([status, proximaGeracao])
   @@index([clienteId])

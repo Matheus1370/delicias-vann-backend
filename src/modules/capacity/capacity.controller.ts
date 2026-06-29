@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Query, Param, UseGuards } from '@nestjs/common';
 import { CapacityService } from './capacity.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -26,5 +26,17 @@ export class CapacityController {
   @Post('slots')
   create(@Body() body: any) {
     return this.capacityService.criarSlots(body);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Patch('slots/:id')
+  update(@Param('id') id: string, @Body() body: any) {
+    return this.capacityService.atualizarSlot(id, body);
+  }
+
+  @Roles('GERENTE', 'ADMINISTRADOR')
+  @Delete('slots/:id')
+  remove(@Param('id') id: string) {
+    return this.capacityService.deletarSlot(id);
   }
 }

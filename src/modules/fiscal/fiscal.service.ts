@@ -68,7 +68,8 @@ export class FiscalService {
       cliente: {
         nome: pedido.cliente.nome,
         email: pedido.cliente.email,
-        cpf: pedido.cliente.cpf ?? undefined,
+        // CPF omitido quando ausente — NFC-e para consumidor não identificado é válida
+        ...(pedido.cliente.cpf ? { cpf: pedido.cliente.cpf } : {}),
       },
       items: pedido.itens.map((it: any, idx: number) => ({
         numero_item: idx + 1,

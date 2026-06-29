@@ -14,15 +14,17 @@ export class InspiracaoService {
   constructor(private prisma: PrismaService) {}
 
   async listarPublicas(filtro?: ListarInspiracoesFiltro) {
-    const where: any = { publicado: true };
-    if (filtro?.tagsMassa?.length) where.tagsMassa = { hasSome: filtro.tagsMassa };
-    if (filtro?.tagsRecheio?.length) where.tagsRecheio = { hasSome: filtro.tagsRecheio };
-    if (filtro?.tagsCobertura?.length) where.tagsCobertura = { hasSome: filtro.tagsCobertura };
-    if (filtro?.tagsTopo?.length) where.tagsTopo = { hasSome: filtro.tagsTopo };
-    if (filtro?.ocasiao) where.ocasiao = filtro.ocasiao;
+    // AND entre categorias: resultado deve ter ao menos uma tag de CADA categoria filtrada.
+    // hasSome dentro de cada categoria = OR entre os valores daquela categoria.
+    const AND: any[] = [{ publicado: true }];
+    if (filtro?.tagsMassa?.length) AND.push({ tagsMassa: { hasSome: filtro.tagsMassa } });
+    if (filtro?.tagsRecheio?.length) AND.push({ tagsRecheio: { hasSome: filtro.tagsRecheio } });
+    if (filtro?.tagsCobertura?.length) AND.push({ tagsCobertura: { hasSome: filtro.tagsCobertura } });
+    if (filtro?.tagsTopo?.length) AND.push({ tagsTopo: { hasSome: filtro.tagsTopo } });
+    if (filtro?.ocasiao) AND.push({ ocasiao: filtro.ocasiao });
 
     return this.prisma.boloInspiracao.findMany({
-      where,
+      where: { AND },
       orderBy: { createdAt: 'desc' },
       take: 60,
     });

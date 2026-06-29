@@ -47,7 +47,7 @@ export class CatalogService {
   private slugify(texto: string): string {
     return texto
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+      .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9]+/g, '-')
@@ -76,16 +76,11 @@ export class CatalogService {
         categoria: true,
         opcoesMontagem: { where: { ativa: true }, orderBy: { ordem: 'asc' } },
         fotos: { orderBy: { ordem: 'asc' } },
-        fichasTecnicas: {
-          where: { tipo: 'FINANCEIRA', ativa: true },
-          select: { custoCalculado: true, margemCalculada: true },
-          take: 1,
-        },
       },
       orderBy: { nome: 'asc' },
     });
 
-    return produtos.map(({ fichasTecnicas, ...p }) => ({
+    return produtos.map((p) => ({
       ...p,
       disponivel: p.status === 'ATIVO' && (p.estoqueVitrine > 0 || p.fulfillment !== 'MAKE_TO_STOCK'),
     }));

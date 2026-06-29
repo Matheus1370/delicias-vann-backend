@@ -24,6 +24,8 @@ export class AssinaturaService {
       frequenciaDias?: number;
       diaPreferido?: number;
       observacoes?: string;
+      modalidadeEntrega?: string;
+      enderecoEntregaId?: string;
     },
   ) {
     const produto = await this.prisma.produto.findUnique({
@@ -45,6 +47,8 @@ export class AssinaturaService {
         proximaGeracao: proxima,
         diaPreferido: data.diaPreferido,
         observacoes: data.observacoes,
+        modalidadeEntrega: (data.modalidadeEntrega as any) ?? 'RETIRADA_BALCAO',
+        enderecoEntregaId: data.enderecoEntregaId ?? null,
       },
     });
 

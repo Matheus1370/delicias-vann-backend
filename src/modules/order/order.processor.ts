@@ -135,7 +135,11 @@ export class OrderProcessor {
           campanha: 'CROSSSELL',
         },
       });
-    } catch {
+    } catch (err: any) {
+      this.logger.error(
+        `[cross-sell] falhou ao criar cupom para pedido ${job.data.pedidoId}: ${err?.message}`,
+      );
+      return; // não envia notificação com cupom inválido
     }
 
     const frontUrl =
@@ -220,7 +224,8 @@ export class OrderProcessor {
       try {
         await this.orderService.create(a.clienteId, {
           itens: [{ produtoId: a.produtoId, quantidade: 1 }],
-          modalidadeEntrega: 'RETIRADA_BALCAO',
+          modalidadeEntrega: (a as any).modalidadeEntrega ?? 'RETIRADA_BALCAO',
+          enderecoEntregaId: (a as any).enderecoEntregaId ?? undefined,
           origem: 'ASSINATURA',
           assinaturaId: a.id,
           observacoes: a.observacoes ?? undefined,
@@ -240,11 +245,27 @@ export class OrderProcessor {
     }
   }
 
+  @Process('expire-credits')
+  async handleExpireCredits() {
+    const agora = new Date();
+    const { count } = await this.prisma.creditoCliente.updateMany({
+      where: {
+        ativo: true,
+        expiraEm: { lt: agora },
+      },
+      data: { ativo: false },
+    });
+    if (count > 0) {
+      this.logger.log(`[expire-credits] ${count} crédito(s) expirado(s) marcados como inativos`);
+    }
+  }
+
   @Process('cupom-aniversario')
   async handleCupomAniversario() {
     const hoje = new Date();
     const mm = hoje.getMonth() + 1;
     const dd = hoje.getDate();
+    const ano = hoje.getFullYear();
 
     const aniversariantes = await this.prisma.$queryRaw<any[]>`
       SELECT id, nome, telefone FROM usuarios
@@ -255,8 +276,15 @@ export class OrderProcessor {
     `;
 
     for (const u of aniversariantes) {
-      const codigo = `NIVER${u.id.slice(0, 6).toUpperCase()}`;
+      // Código único por usuário por ano — idempotente (cron pode rodar mais de uma vez)
+      const codigo = `NIVER${ano}-${u.id.slice(0, 6).toUpperCase()}`;
       try {
+        const jaExiste = await this.prisma.cupom.findUnique({ where: { codigo } });
+        if (jaExiste) {
+          this.logger.log(`[aniversario] cupom ${codigo} já criado, pulando`);
+          continue;
+        }
+
         const validoAte = new Date();
         validoAte.setDate(validoAte.getDate() + 14);
         await this.prisma.cupom.create({
@@ -270,9 +298,11 @@ export class OrderProcessor {
             descricao: `Feliz aniversário, ${u.nome}!`,
           },
         });
+
         if (u.telefone) {
           await this.notifications.send({
-            pedidoId: '',
+            pedidoId: null,
+            usuarioId: u.id,
             telefone: u.telefone,
             templateId: 'cupom_aniversario',
             payload: { nome: u.nome, codigo },
